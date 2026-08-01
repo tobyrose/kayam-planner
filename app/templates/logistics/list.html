@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Loads · Kayam Planner{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div><p class="text-uppercase text-muted small mb-1">Transport</p><h1>Loads</h1></div>
+  <div><a class="btn btn-outline-secondary" href="/loads/export.csv">Export CSV</a> <a class="btn btn-primary" href="/loads/new">New movement &amp; load</a></div>
+</div>
+<div class="table-responsive planning-section"><table class="table align-middle">
+  <thead><tr><th>Load</th><th>Route</th><th>Window</th><th>Status</th><th>Capacity</th></tr></thead>
+  <tbody>{% for load in loads %}<tr>
+    <td><a href="/loads/{{ load.id }}"><strong>{{ load.display_code }}</strong></a></td>
+    <td>{{ load.movement.origin.name }} → {{ load.movement.destination.name }}</td>
+    <td>{{ load.movement.depart_after.strftime('%d %b %H:%M') }} – {{ load.movement.arrive_by.strftime('%d %b %H:%M') }}</td>
+    <td><span class="badge text-bg-secondary">{{ load.status.value|replace('_', ' ') }}</span></td>
+    <td><span class="capacity-{{ capacities[load.id].status }}">{{ capacities[load.id].status }}</span></td>
+  </tr>{% else %}<tr><td colspan="5">No loads yet.</td></tr>{% endfor %}</tbody>
+</table></div>
+{% endblock %}

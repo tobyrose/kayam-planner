@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Jobs · Kayam Planner{% endblock %}
+{% block content %}
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <div><p class="text-uppercase text-secondary fw-semibold mb-1">Commercial and operational work</p><h1 class="h2 mb-0">Jobs</h1></div>
+    <a class="btn btn-primary" href="/jobs/new">Add job</a>
+  </div>
+  <div class="table-responsive border rounded bg-white">
+    <table class="table table-sm table-hover align-middle mb-0 admin-table">
+      <thead><tr><th>Code</th><th>Job</th><th>Location</th><th>Site access</th><th>Must be up</th><th>Commercial</th><th>Planning</th><th></th></tr></thead>
+      <tbody>
+        {% for job in jobs %}
+          <tr class="job-status-{{ job.commercial_status.value }}">
+            <td>{{ job.job_code }}</td><td>{{ job.name }}</td><td>{{ job.location.name }}</td>
+            <td>{{ job.site_access_at.strftime('%d %b %Y %H:%M') }}</td><td>{{ job.must_be_up_at.strftime('%d %b %Y %H:%M') }}</td>
+            <td><span class="status-label">{{ job.commercial_status.value|replace('_', ' ') }}</span></td>
+            <td>{{ job.planning_status.value|replace('_', ' ') }}</td><td><a href="/jobs/{{ job.id }}">Open</a></td>
+          </tr>
+        {% else %}<tr><td colspan="8" class="text-center text-secondary py-4">No jobs yet.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+{% endblock %}

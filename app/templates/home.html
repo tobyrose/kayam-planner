@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+
+{% block title %}Home · {{ app_name }}{% endblock %}
+
+{% block content %}
+  <section aria-labelledby="page-title">
+    <p class="text-uppercase text-secondary fw-semibold mb-2">Seasonal operations</p>
+    <h1 id="page-title" class="display-6">{{ app_name }}</h1>
+    <p class="lead col-lg-8">
+      Plan jobs, people, equipment and transport as one continuous seasonal flow—with confirmed
+      work protected and provisional opportunities still visible.
+    </p>
+    <div class="alert alert-success d-inline-flex align-items-center gap-2" role="status">
+      <span aria-hidden="true">●</span>
+      Planner ready
+    </div>
+    <div class="row g-3 mt-3">
+      <div class="col-md-4"><a class="planning-section d-block text-decoration-none text-body h-100" href="/planning"><strong>Open the season board →</strong><br><small class="text-muted">See crew, assets, loads and movements together.</small></a></div>
+      <div class="col-md-4"><a class="planning-section d-block text-decoration-none text-body h-100" href="/jobs"><strong>Plan jobs →</strong><br><small class="text-muted">From enquiry through confirmed operation.</small></a></div>
+      <div class="col-md-4"><a class="planning-section d-block text-decoration-none text-body h-100" href="/conflicts"><strong>Review attention items →</strong><br><small class="text-muted">Resolve hard conflicts and conditional risks.</small></a></div>
+    </div>
+  </section>
+{% endblock %}

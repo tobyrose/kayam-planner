@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+
+{% block title %}{% if record_id %}Edit{% else %}Add{% endif %} {{ entity.singular }} · Kayam Planner{% endblock %}
+
+{% block content %}
+  <nav aria-label="Breadcrumb">
+    <ol class="breadcrumb small">
+      <li class="breadcrumb-item"><a href="/admin">Administration</a></li>
+      <li class="breadcrumb-item"><a href="/admin/{{ entity.slug }}">{{ entity.plural }}</a></li>
+      <li class="breadcrumb-item active" aria-current="page">{% if record_id %}Edit{% else %}Add{% endif %}</li>
+    </ol>
+  </nav>
+  <h1 class="h2 mb-3">{% if record_id %}Edit{% else %}Add{% endif %} {{ entity.singular|lower }}</h1>
+
+  {% if errors %}
+    <div class="alert alert-danger" role="alert">
+      <p class="fw-semibold mb-1">Please correct the following:</p>
+      <ul class="mb-0">{% for error in errors %}<li>{{ error }}</li>{% endfor %}</ul>
+    </div>
+  {% endif %}
+
+  <form method="post" class="bg-white border rounded p-3 p-md-4 admin-form"
+        action="{% if record_id %}/admin/{{ entity.slug }}/{{ record_id }}/edit{% else %}/admin/{{ entity.slug }}/new{% endif %}">
+    <div class="row g-3">
+      {% for field in entity.fields %}
+        {% set current = values.get(field.name) %}
+        {% if field.kind == "checkbox" %}
+          <div class="col-12">
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" value="true" id="{{ field.name }}"
+                     name="{{ field.name }}" {% if current %}checked{% endif %}>
+              <label class="form-check-label" for="{{ field.name }}">{{ field.label }}</label>
+            </div>
+          </div>
+        {% elif field.kind == "textarea" %}
+          <div class="col-12">
+            <label class="form-label" for="{{ field.name }}">{{ field.label }}</label>
+            <textarea class="form-control" id="{{ field.name }}" name="{{ field.name }}" rows="3"
+                      {% if field.required %}required{% endif %}>{{ current or '' }}</textarea>
+          </div>
+        {% elif field.kind == "select" %}
+          <div class="col-md-6">
+            <label class="form-label" for="{{ field.name }}">{{ field.label }}</label>
+            <select class="form-select" id="{{ field.name }}" name="{{ field.name }}"
+                    {% if field.required %}required{% endif %}>
+              {% if not field.required %}<option value="">—</option>{% endif %}
+              {% for value, label in field.choices %}
+                <option value="{{ value }}" {% if current|string == value|string %}selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+              {% for value, label in options[field.name] %}
+                <option value="{{ value }}" {% if current|string == value|string %}selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+        {% else %}
+          <div class="col-md-6">
+            <label class="form-label" for="{{ field.name }}">{{ field.label }}</label>
+            <input class="form-control" type="{{ field.kind }}" id="{{ field.name }}"
+                   name="{{ field.name }}" value="{{ current if current is not none else '' }}"
+                   {% if field.step %}step="{{ field.step }}"{% endif %}
+                   {% if field.required %}required{% endif %}>
+            {% if field.help_text %}<div class="form-text">{{ field.help_text }}</div>{% endif %}
+          </div>
+        {% endif %}
+      {% endfor %}
+    </div>
+    <div class="d-flex gap-2 mt-4">
+      <button class="btn btn-primary" type="submit">Save</button>
+      <a class="btn btn-outline-secondary" href="/admin/{{ entity.slug }}">Cancel</a>
+    </div>
+  </form>
+{% endblock %}

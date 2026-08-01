@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+
+{% block title %}Administration · Kayam Planner{% endblock %}
+
+{% block content %}
+  <div class="d-flex align-items-start justify-content-between gap-3 mb-4">
+    <div>
+      <p class="text-uppercase text-secondary fw-semibold mb-1">Reference data</p>
+      <h1 class="h2 mb-2">Administration</h1>
+      <p class="text-secondary mb-0">Configure operational reference data used by later planning milestones.</p>
+    </div>
+  </div>
+
+  <section class="planning-section mb-4">
+    <h2 class="h5">System administration</h2>
+    <p class="mb-2">Create a database backup, export core JSON, and review the audit trail.</p>
+    <a class="btn btn-outline-primary" href="/system">Open system tools</a>
+  </section>
+
+  <div class="row g-4">
+    {% for group, entities in groups.items() %}
+      <section class="col-lg-6" aria-labelledby="group-{{ loop.index }}">
+        <h2 id="group-{{ loop.index }}" class="h5 border-bottom pb-2">{{ group }}</h2>
+        <div class="list-group list-group-flush compact-admin-list">
+          {% for entity in entities %}
+            <a class="list-group-item list-group-item-action d-flex justify-content-between align-items-center"
+               href="/admin/{{ entity.slug }}">
+              <span>{{ entity.plural }}</span>
+              <span aria-hidden="true">→</span>
+            </a>
+          {% endfor %}
+        </div>
+      </section>
+    {% endfor %}
+  </div>
+{% endblock %}

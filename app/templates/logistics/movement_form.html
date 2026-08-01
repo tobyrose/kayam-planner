@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}New load · Kayam Planner{% endblock %}
+{% block content %}<h1>New equipment movement</h1>
+<form method="post" class="planning-section admin-form row g-3">
+  <div class="col-md-6"><label class="form-label">Movement code</label><input class="form-control" name="movement_code" placeholder="MV-026" required></div>
+  <div class="col-md-3"><label class="form-label">Load number</label><input class="form-control" type="number" min="1" name="load_number" value="1" required></div>
+  <div class="col-md-3"><label class="form-label">Status</label><select class="form-select" name="status">{% for status in movement_statuses %}<option value="{{ status.value }}">{{ status.value|replace('_', ' ')|title }}</option>{% endfor %}</select></div>
+  <div class="col-md-6"><label class="form-label">Origin</label><select class="form-select" name="origin_location_id" required>{% for location in locations %}<option value="{{ location.id }}">{{ location.name }}</option>{% endfor %}</select></div>
+  <div class="col-md-6"><label class="form-label">Destination</label><select class="form-select" name="destination_location_id" required>{% for location in locations %}<option value="{{ location.id }}">{{ location.name }}</option>{% endfor %}</select></div>
+  <div class="col-md-6"><label class="form-label">Depart after</label><input class="form-control" type="datetime-local" name="depart_after" required></div>
+  <div class="col-md-6"><label class="form-label">Arrive by</label><input class="form-control" type="datetime-local" name="arrive_by" required></div>
+  <div class="col-12"><label class="form-label">Lorry type</label><select class="form-select" name="lorry_type_id" required>{% for item in lorry_types %}<option value="{{ item.id }}">{{ item.name }}</option>{% endfor %}</select></div>
+  <div class="col-12"><button class="btn btn-primary">Create movement and first load</button></div>
+</form>{% endblock %}

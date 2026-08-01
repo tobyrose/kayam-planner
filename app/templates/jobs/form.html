@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}{% if job_id %}Edit{% else %}Add{% endif %} job · Kayam Planner{% endblock %}
+{% block content %}
+  <nav aria-label="Breadcrumb"><ol class="breadcrumb small"><li class="breadcrumb-item"><a href="/jobs">Jobs</a></li><li class="breadcrumb-item active">{% if job_id %}Edit{% else %}Add{% endif %}</li></ol></nav>
+  <h1 class="h2 mb-3">{% if job_id %}Edit{% else %}Add{% endif %} job</h1>
+  {% if errors %}<div class="alert alert-danger"><ul class="mb-0">{% for error in errors %}<li>{{ error }}</li>{% endfor %}</ul></div>{% endif %}
+  <form method="post" class="job-form" action="{% if job_id %}/jobs/{{ job_id }}/edit{% else %}/jobs/new{% endif %}">
+    <section class="form-section"><h2 class="h5">Commercial</h2><div class="row g-3">
+      <div class="col-md-3"><label class="form-label" for="job_code">Job code</label><input class="form-control" id="job_code" name="job_code" value="{{ values.get('job_code') or '' }}" required></div>
+      <div class="col-md-5"><label class="form-label" for="name">Job name</label><input class="form-control" id="name" name="name" value="{{ values.get('name') or '' }}" required></div>
+      <div class="col-md-4"><label class="form-label" for="customer_name">Customer</label><input class="form-control" id="customer_name" name="customer_name" value="{{ values.get('customer_name') or '' }}" required></div>
+      <div class="col-md-4"><label class="form-label" for="commercial_status">Commercial status</label><select class="form-select" id="commercial_status" name="commercial_status">{% for status in commercial_statuses %}<option value="{{ status.value }}" {% if values.get('commercial_status') == status.value %}selected{% endif %}>{{ status.value|replace('_',' ')|title }}</option>{% endfor %}</select></div>
+      <div class="col-md-4"><label class="form-label" for="planning_status">Planning status</label><select class="form-select" id="planning_status" name="planning_status">{% for status in planning_statuses %}<option value="{{ status.value }}" {% if values.get('planning_status') == status.value %}selected{% endif %}>{{ status.value|replace('_',' ')|title }}</option>{% endfor %}</select></div>
+      <div class="col-md-2"><label class="form-label" for="confidence_percent">Confidence %</label><input class="form-control" type="number" min="0" max="100" id="confidence_percent" name="confidence_percent" value="{{ values.get('confidence_percent') if values.get('confidence_percent') is not none else '' }}"></div>
+      <div class="col-md-2"><label class="form-label" for="currency">Currency</label><input class="form-control" id="currency" name="currency" value="{{ values.get('currency') or 'GBP' }}" maxlength="3"></div>
+      <div class="col-md-3"><label class="form-label" for="contract_revenue">Contract revenue</label><input class="form-control" type="number" min="0" step="0.01" id="contract_revenue" name="contract_revenue" value="{{ values.get('contract_revenue') or 0 }}"></div>
+      <div class="col-md-4"><label class="form-label" for="deposit_received_at">Deposit received</label><input class="form-control" type="datetime-local" id="deposit_received_at" name="deposit_received_at" value="{{ values.get('deposit_received_at') or '' }}"></div>
+    </div></section>
+    <section class="form-section"><h2 class="h5">Location and milestones</h2><div class="row g-3">
+      <div class="col-md-6"><label class="form-label" for="location_id">Location</label><select class="form-select" id="location_id" name="location_id" required>{% for location in locations %}<option value="{{ location.id }}" {% if values.get('location_id')|string == location.id|string %}selected{% endif %}>{{ location.name }}</option>{% endfor %}</select></div>
+      {% for name, label, required in [('site_access_at','Site access',true),('must_be_up_at','Must be up',true),('show_start_at','Show start',false),('show_end_at','Show end',false),('strike_available_at','Strike available',true),('site_clear_by','Site clear by',false)] %}
+        <div class="col-md-4"><label class="form-label" for="{{ name }}">{{ label }}</label><input class="form-control" type="datetime-local" id="{{ name }}" name="{{ name }}" value="{{ values.get(name) or '' }}" {% if required %}required{% endif %}></div>
+      {% endfor %}
+    </div></section>
+    <section class="form-section"><h2 class="h5">Operations</h2><div class="row g-3">
+      <div class="col-md-3"><label class="form-label" for="ground_type">Ground type</label><input class="form-control" id="ground_type" name="ground_type" value="{{ values.get('ground_type') or '' }}"></div>
+      <div class="col-md-3"><label class="form-label" for="local_crew_required">Local crew required</label><input class="form-control" type="number" min="0" id="local_crew_required" name="local_crew_required" value="{{ values.get('local_crew_required') or 0 }}"></div>
+      <div class="col-md-3"><label class="form-label" for="local_crew_supplied">Local crew supplied</label><input class="form-control" type="number" min="0" id="local_crew_supplied" name="local_crew_supplied" value="{{ values.get('local_crew_supplied') or 0 }}"></div>
+      <div class="col-md-3 d-flex align-items-end"><div class="form-check mb-2"><input class="form-check-input" type="checkbox" id="maintenance_cover_required" name="maintenance_cover_required" {% if values.get('maintenance_cover_required') %}checked{% endif %}><label class="form-check-label" for="maintenance_cover_required">Maintenance cover required</label></div></div>
+      {% for name, label in [('catering_arrangement','Catering'),('accommodation_arrangement','Accommodation'),('build_scope','Build scope'),('strike_scope','Strike scope'),('operational_notes','Operational notes'),('commercial_notes','Commercial notes')] %}
+        <div class="col-md-6"><label class="form-label" for="{{ name }}">{{ label }}</label><textarea class="form-control" id="{{ name }}" name="{{ name }}" rows="2">{{ values.get(name) or '' }}</textarea></div>
+      {% endfor %}
+    </div></section>
+    <div class="d-flex gap-2"><button class="btn btn-primary" type="submit">Save job</button><a class="btn btn-outline-secondary" href="/jobs">Cancel</a></div>
+  </form>
+{% endblock %}

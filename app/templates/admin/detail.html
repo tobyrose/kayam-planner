@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+
+{% block title %}{{ entity.singular }} · Kayam Planner{% endblock %}
+
+{% block content %}
+  <nav aria-label="Breadcrumb">
+    <ol class="breadcrumb small">
+      <li class="breadcrumb-item"><a href="/admin">Administration</a></li>
+      <li class="breadcrumb-item"><a href="/admin/{{ entity.slug }}">{{ entity.plural }}</a></li>
+      <li class="breadcrumb-item active" aria-current="page">Record {{ record.id }}</li>
+    </ol>
+  </nav>
+  <div class="d-flex justify-content-between align-items-start gap-3 mb-3">
+    <h1 class="h2 mb-0">{{ entity.singular }}</h1>
+    <a class="btn btn-primary" href="/admin/{{ entity.slug }}/{{ record.id }}/edit">Edit</a>
+  </div>
+
+  <dl class="row bg-white border rounded py-3 mb-4 admin-detail">
+    {% for label, value in details %}
+      <dt class="col-sm-4 col-lg-3">{{ label }}</dt>
+      <dd class="col-sm-8 col-lg-9">{{ value }}</dd>
+    {% endfor %}
+  </dl>
+
+  {% if entity.slug == "tent-configurations" %}
+    <section class="mb-4" aria-labelledby="component-heading">
+      <div class="d-flex justify-content-between align-items-center mb-2">
+        <h2 id="component-heading" class="h4 mb-0">Component requirements</h2>
+        <a class="btn btn-sm btn-outline-primary"
+           href="/admin/configuration-requirements/new?tent_configuration_id={{ record.id }}">Add component</a>
+      </div>
+      <div class="table-responsive border rounded bg-white">
+        <table class="table table-sm mb-0">
+          <thead><tr><th>Equipment type</th><th>Quantity</th><th>Required stage</th><th></th></tr></thead>
+          <tbody>
+            {% for component in components %}
+              <tr>
+                <td>{{ component.equipment_type }}</td>
+                <td>{{ component.quantity }}</td>
+                <td>{{ component.stage }}</td>
+                <td class="text-end"><a href="/admin/configuration-requirements/{{ component.id }}">View</a></td>
+              </tr>
+            {% else %}
+              <tr><td colspan="4" class="text-secondary text-center py-3">No component requirements.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  {% endif %}
+
+  <form method="post" action="/admin/{{ entity.slug }}/{{ record.id }}/delete"
+        onsubmit="return confirm('Delete this {{ entity.singular|lower }}?');">
+    <button class="btn btn-outline-danger" type="submit">Delete</button>
+  </form>
+{% endblock %}

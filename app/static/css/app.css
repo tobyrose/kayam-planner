@@ -1,0 +1,190 @@
+:root {
+  --kayam-focus: #f3b61f;
+}
+
+body {
+  background: #f7f7f4;
+  color: #202522;
+}
+
+:focus-visible {
+  outline: 3px solid var(--kayam-focus);
+  outline-offset: 3px;
+}
+
+.navbar-brand {
+  letter-spacing: 0.02em;
+}
+
+.admin-table th,
+.admin-table td {
+  padding-inline: 0.75rem;
+  white-space: nowrap;
+}
+
+.admin-form {
+  max-width: 64rem;
+}
+
+.admin-detail dt,
+.admin-detail dd {
+  margin-bottom: 0.5rem;
+}
+
+.compact-admin-list .list-group-item {
+  padding-block: 0.55rem;
+}
+
+.form-section,
+.planning-section {
+  background: #fff;
+  border: 1px solid #d9ddd9;
+  border-radius: 0.4rem;
+  margin-bottom: 1rem;
+  padding: 1rem;
+}
+
+.milestone-strip {
+  background: #202522;
+  color: #fff;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.25rem;
+  padding: 0.7rem 1rem;
+}
+
+.phase-row {
+  border-top: 1px solid #e4e7e4;
+  padding-block: 0.55rem;
+}
+
+.job-status-quoted,
+.job-status-enquiry,
+.job-status-deposit_requested {
+  background-image: repeating-linear-gradient(135deg, transparent, transparent 7px, #eef1ee 7px, #eef1ee 14px);
+}
+
+.status-label {
+  text-transform: capitalize;
+}
+
+.planning-board-wrap {
+  border: 1px solid #cfd4cf;
+  max-height: 72vh;
+  overflow: auto;
+}
+
+.planning-board {
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 0.78rem;
+  min-width: 70rem;
+  width: 100%;
+}
+
+.planning-board th,
+.planning-board td {
+  background: #fff;
+  border-bottom: 1px solid #e1e4e1;
+  border-right: 1px solid #e1e4e1;
+  min-width: 12rem;
+  padding: 0.2rem;
+  vertical-align: top;
+}
+
+.planning-board thead th {
+  background: #202522;
+  color: #fff;
+  position: sticky;
+  top: 0;
+  z-index: 3;
+}
+
+.planning-board .sticky-date {
+  left: 0;
+  min-width: 7.5rem;
+  position: sticky;
+  z-index: 2;
+}
+
+.planning-board tbody .sticky-date {
+  background: #f2f3f0;
+}
+
+.board-block {
+  border-left: 4px solid #23764a;
+  color: #17251d;
+  display: block;
+  margin-bottom: 0.15rem;
+  padding: 0.18rem 0.3rem;
+  text-decoration: none;
+}
+
+.board-block.status-enquiry,
+.board-block.status-quoted {
+  background: repeating-linear-gradient(135deg, #f4f6f4, #f4f6f4 5px, #e4e9e4 5px, #e4e9e4 10px);
+  border-left-style: dashed;
+}
+
+.board-block.activity {
+  border-left-color: #7158a8;
+}
+
+.add-cell-link {
+  color: #68726b;
+  float: right;
+  text-decoration: none;
+}
+
+.timeline {
+  border-left: 3px solid #2d7650;
+  margin-left: 0.5rem;
+  padding-left: 1.25rem;
+}
+
+.timeline-entry {
+  background: #fff;
+  border: 1px solid #d7ddd8;
+  margin-bottom: 0.75rem;
+  padding: 0.75rem;
+  position: relative;
+}
+
+.capacity-within { color: #23764a; }
+.capacity-near { color: #a55c00; font-weight: 700; }
+.capacity-over { color: #b42318; font-weight: 700; }
+.capacity-card { border-left-width: 6px; }
+
+@media print {
+  nav, .d-print-none { display: none !important; }
+  body { background: #fff; }
+  .planning-section { border: 0; }
+}
+
+.board-toolbar #board-filter { max-width: 22rem; }
+.legend { border-left: 5px solid #23764a; display: inline-block; height: 0.8rem; margin-left: 0.7rem; width: 1.3rem; }
+.legend.provisional { border-left-style: dashed; background: #edf0ed; }
+.legend.conflict { border-left-color: #b42318; }
+.season-board-wrap { border: 1px solid #cfd4cf; max-height: 72vh; overflow: auto; }
+.season-board { border-collapse: separate; border-spacing: 0; font-size: 0.72rem; min-width: 95rem; width: 100%; }
+.season-board th, .season-board td { background: #fff; border-bottom: 1px solid #e1e4e1; border-right: 1px solid #e1e4e1; min-width: 11rem; padding: 0.18rem; vertical-align: top; }
+.season-board thead th { background: #202522; color: #fff; position: sticky; top: 0; z-index: 5; }
+.season-board .sticky-date { left: 0; min-width: 6.5rem; position: sticky; z-index: 4; }
+.season-board tbody .sticky-date { background: #f2f3f0; }
+.season-board time strong { display: block; }
+.season-block { background: #edf7f1; border-left: 4px solid #23764a; color: #17251d; display: block; margin-bottom: 0.12rem; padding: 0.18rem 0.28rem; text-decoration: none; transition: opacity .15s, transform .15s; }
+.season-block small { display: block; }
+.season-block.asset { background: #eef5ff; border-left-color: #2872b8; }
+.season-block.load { background: #fff5e8; border-left-color: #bd6900; }
+.season-block.crew-move, .season-block.activity { background: #f5efff; border-left-color: #7158a8; }
+.season-block.status-soft, .season-block.status-enquiry, .season-block.status-quoted { background-image: repeating-linear-gradient(135deg, transparent, transparent 5px, #dde3dd 5px, #dde3dd 10px); border-left-style: dashed; }
+.season-block.has-conflict { border-left-color: #b42318; box-shadow: inset 0 0 0 1px #f3b2ad; }
+.season-block.highlighted { box-shadow: 0 0 0 3px #f3b61f; position: relative; transform: scale(1.02); z-index: 2; }
+.season-block.dimmed { opacity: .16; }
+.season-board[data-zoom="compact"] { font-size: .62rem; }
+.season-board[data-zoom="compact"] .season-block small { display: none; }
+.season-board[data-zoom="comfortable"] { font-size: .82rem; }
+.board-panel { background: #fff; border-left: 5px solid #f3b61f; bottom: 1rem; box-shadow: 0 5px 30px #0003; max-width: 24rem; padding: 1.2rem; position: fixed; right: 1rem; width: calc(100% - 2rem); z-index: 10; }
+.conflict-dot { background: #d48200; border-radius: 50%; flex: 0 0 auto; height: .8rem; margin-top: .4rem; width: .8rem; }
+.conflict-dot.hard { background: #b42318; }
+.suggestion-card { align-items: center; background: #fbfcfa; border: 1px solid #d9ddd9; border-radius: .35rem; color: inherit; display: flex; justify-content: space-between; margin-bottom: .5rem; padding: .65rem; text-decoration: none; }
