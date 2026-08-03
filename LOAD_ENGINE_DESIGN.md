@@ -19,52 +19,66 @@ margins/allowances).
 
 The owner's own words: "This diagram is how we work out the most efficient routes and generate
 the 'Loads List' for hauliers — it's VERY manual and VERY prone to error — it's easy to lose
-sections or 'magic' things to places." Two reference images were supplied and read directly:
+sections or 'magic' things to places." Three reference images were supplied and read directly:
 
 - `reference/kay_loads_diagram.png` — a full season, hand-built in Excel.
 - `reference/kay.loads.close.example.png` — a hand-drawn close-up of one small section of the
   same idea, walked through verbally.
+- `reference/kay.loads.valhalla.example.png` — a second full-season snapshot (Valhalla family),
+  supplied to walk through the Roskilde → New Day → Reading worked example in §1.3.
 
-What follows is my read of those two images plus the owner's explanation, written out in full so
-it can be checked rather than assumed correct.
+What follows is my read of those images plus the owner's explanation, written out in full so it
+can be checked rather than assumed correct. §1.2's structure and §1.5's four open questions were
+fully resolved by the owner on 2026-08-04 — read those sections for current understanding.
 
-### 1.2 Structure, as I currently understand it
+### 1.2 Structure — resolved 2026-08-04, all four §1.5 open questions answered
 
 - **Dates run down the left**, one row per day — same convention as the season board and the
   existing `/planning/flow` diagram.
-- **Columns are jobs and yard-occupancy, not fixed lanes.** A job's column starts on the day its
-  first load's equipment arrives and ends when its last load departs — the same "expand columns as
-  needed, shrink when not" interval-packing idea already built for the season board's Unassigned/
-  Quoted lane (D038), explicitly confirmed by the owner as the right model here too: **"This is
-  similar to how we were going to do the unassigned jobs. Expand columns so jobs fit, reduce
-  columns if not needed. NOT one job per column."** Gaps between a job's column and the next thing
-  that column-slot holds represent travel time, and the whole diagram reads left-to-right as
-  "whatever's physically closest together in time," not one column per physical site.
-- **The Yard is a colour, not a column.** A light-blue background marks Yard occupancy, and it
-  recurs in many different column positions throughout the sheet, not one fixed lane. Whenever
-  equipment is sitting in the Yard, that equipment's codes are re-listed on every day it's still
-  there, so a planner can read straight down a blue block and see exactly what's in the yard on
-  any given date, *provided* the loads that brought it in have already arrived and the loads
-  taking it out haven't left yet. This is the single hardest part of the diagram to translate into
-  a rendering algorithm — see the open question in §1.5.
-- **A job's box lists real equipment codes, not just a section-sequence summary.** Each job's
-  column shows: a small numbered header (the load number(s) delivering it), the actual codes
-  arriving (e.g. `K8`, `P4`, `M26`, `sb1`), the job name, then — lower down in the *same* box — the
-  same-style list again for what's *leaving*. Owner's words: **"We show all the sections coming in
-  ... copy all the things underneath in the same box and show them going out."** Arriving and
-  departing lists can differ (not everything that arrives leaves together, or leaves for the same
-  next destination).
-- **Colour marks provenance/destination, not job identity.** In the close-up example, an orange
-  tint follows one batch of equipment from the Yard into Catalyst; a green tint follows a
-  different batch from "Another Job" onward. This is what lets a planner visually trace "which
-  things are leaving and which are arriving and where they're travelling to" at a glance, per the
-  owner's description.
-- **Small numbered headers above a block are load numbers.** E.g. "1 2" above Catalyst's incoming
-  block, "15 16 17" above Silverstone's. The worked example: **"Load 15, 16, 17 contains all
-  equipment we need for Silverstone ... the things we need at Silverstone adds up to 3 trailers —
-  so that's what we show."** i.e. the number of columns/cells in a load-number header block is
-  literally the number of lorries needed to carry that job's requirement, computed from the
-  points-per-lorry capacity math already recorded in `OPEN_QUESTIONS.md` Q042.
+- **Job columns are dynamically packed, not fixed lanes.** A job's column spans from its **first
+  Build day to its last Break day** (exactly `_job_window()` in `app/services/board.py` — no new
+  date logic needed, just reuse it) — the same "expand columns as needed, shrink when not"
+  interval-packing idea already built for the season board's Unassigned/Quoted lane (D038),
+  confirmed by the owner as the right model here too. Boxes **do not need to touch** each other —
+  gaps between a job's column and whatever's in that column-slot next represent travel time. Think
+  of the whole diagram as a graph of how sections move over time, not a floor plan.
+- **The Yard is one fixed column, always present — not dynamically packed, and not showing its
+  full contents by default.** This resolves what was originally thought to be the hardest part of
+  the diagram: the owner confirmed the *position* of the Yard block in the original hand-built
+  sheet was never meaningful ("for sure wherever Excel happened to have a free column that
+  week... the position and size of YARD block is irrelevant compared to date loads go in and out
+  of Yard, which should be on the correct date"). So instead of trying to reproduce that
+  positioning, the Yard becomes a normal single column like everything else in `/planning/flow`
+  today: **it shows only load-number markers on the dates loads depart or arrive** (e.g. "load 1,
+  2, 3 depart" / "load 4, 5, 6 arrive"), not a running list of every component sitting there.
+  Clicking a date in the Yard column opens the existing side-panel pattern (the one job blocks
+  already open, D038) as a **slide-out showing exactly what's in the Yard that day** — incoming
+  and outgoing components each coloured to match the job/load they're connected to. Full detail is
+  a click away rather than permanently on-screen, which is both truer to what the owner actually
+  cares about (dates in/out, not a permanent live inventory snapshot) and removes the hardest
+  layout problem entirely.
+- **A job's box lists real equipment codes, not just a section-sequence summary**, in exactly two
+  stacked lists: an **arrivals list on top, a departures list below** — the same items repeated in
+  the "going out" list when they leave, per the owner: "components should be shown 'coming in' to
+  a job, components are repeated below the dividing line where they 'go out' of the job." Neither
+  list is limited to one same-day/same-origin batch — **a job can receive loads from several
+  different origins on several different dates, and send loads to several different destinations
+  on several different dates**, all listed within that one job's box, positioned against the
+  correct date rows. Confirmed directly against a second worked example (§1.3): New Day's box
+  shows incoming loads from *both* Roskilde and the Yard; Reading's box shows incoming loads from
+  *both* New Day and the Yard.
+- **Colour marks provenance/destination, not job identity** — a batch of equipment travelling
+  together keeps one colour from its origin box's departure list through to its destination box's
+  arrival list, which is what lets a planner trace "what's leaving, what's arriving, where it's
+  going" at a glance.
+- **One load number = one load = one lorry — always.** This resolves the "8 8 8" ambiguity: it is
+  **not** three trailers sharing one number. It's a single load (load 8) whose number is shown
+  more than once as a positional/visual aid — appearing near its departure point and again near
+  its arrival point as the diagram's layout moves it "left to free space, then down to another
+  job." The existing `Load` model (one row per lorry, its own `load_number`) needs no schema
+  change for this. Where a job genuinely needs multiple lorries (e.g. Silverstone's "15, 16, 17"),
+  that's exactly what it looks like: multiple *distinct* sequential numbers, one per lorry, per
+  the points-per-lorry capacity math in `OPEN_QUESTIONS.md` Q042.
 - **Clicking an equipment code should trace it through the whole season.** Owner's example:
   **"we could click on K8 for example — it would highlight and we could track exactly how that
   section flows through the season."** This is the same click-to-highlight interaction the season
@@ -72,7 +86,9 @@ it can be checked rather than assumed correct.
   assets before the season-board rebuild dropped the separate Equipment column (D038) — it needs
   to come back specifically for this diagram (see §3, implementation note).
 
-### 1.3 Worked example (Yard → Silverstone), verbatim from the owner
+### 1.3 Worked examples, verbatim from the owner
+
+**Yard → Silverstone** (single direct move, multi-lorry):
 
 > Taking Yard to Silverstone as an example: these places are quite close, we load on 18th June —
 > arrive 19th June. Load 15, 16, 17 contains all equipment we need for Silverstone — so split of
@@ -80,9 +96,16 @@ it can be checked rather than assumed correct.
 > 3 trailers — so that's what we show. We show all the sections coming in (in purple here) line —
 > copy all the things underneath in the same box and show them going out.
 
-Reading this against the full diagram: Silverstone's box does show a "15 16 17" header, a purple
-arrival list, the "SILVERSTONE" label, then a repeated departure list lower in the same box —
-matches the general pattern in §1.2.
+**Roskilde → New Day → Reading, plus Yard top-ups** (multi-origin arrivals, `reference/kay.loads.valhalla.example.png`, a Valhalla-family snapshot):
+
+> Load 12, 13, 14 goes from Roskilde to New Day. Load 25, 26 go from the Yard to New Day. Load 44,
+> 45, 46, 47, 48 go from New Day to Reading. Load 49 goes from the Yard to Reading. Everything is
+> shown on the right dates.
+
+New Day's box therefore shows two separate incoming groups (Roskilde's 12/13/14 and the Yard's
+25/26) in its arrivals list; Reading's box shows two separate incoming groups (New Day's
+44–48 and the Yard's 49) in its arrivals list — directly confirming the "arrivals/departures can
+each span several origins and dates" rule above.
 
 ### 1.4 Table vs. D3 — recommendation
 
@@ -99,38 +122,37 @@ with D3.** Reasoning:
   shared data attribute across every block on the page (`board.js`, D033, previously supported
   asset codes too before D038 removed the separate Equipment column — reinstating that for this
   diagram is a small, known change, not new design).
-- The one genuinely new piece is the Yard's *recurring, multi-instance* column behaviour (§1.5) —
-  but that's a harder packing problem, not a rendering-technology problem. A table can still render
-  whatever the packing algorithm decides; D3 wouldn't make the packing decision any easier.
+- The Yard turned out to need no special packing at all once resolved (§1.2) — it's one fixed
+  column like any other location column in `/planning/flow` today, not a dynamically-packed or
+  recurring one. That removes what looked like the one genuinely hard rendering problem.
 - `AGENTS.md`'s own rule — JavaScript stays presentational, structured records drive everything —
   argues against introducing a heavy client-side data-viz framework for something a template loop
   can already produce. It would also be the first non-vanilla-JS dependency in the stack
   (FastAPI + Jinja2 + HTMX + vanilla JS today).
-- Fallback: if, once built, the Yard's repeated-column behaviour genuinely can't read clearly in a
-  strict table grid, the SVG-overlay technique already used for flow-diagram journey lines can be
+- Fallback: if, once built, some other part of the layout genuinely can't read clearly in a strict
+  table grid, the SVG-overlay technique already used for flow-diagram journey lines can be
   extended rather than reaching for D3 wholesale.
 
-### 1.5 Open questions on the diagram itself (need the owner's check before building)
+### 1.5 Open questions on the diagram itself — RESOLVED 2026-08-04
 
-1. **How does the Yard get its column(s)?** Is it one dynamically-packed lane per concurrent
-   "batch" of yard stock (mirroring the job interval-packing exactly, just for yard-resident
-   equipment groups instead of jobs), or something else? The full diagram shows the Yard's blue
-   background jumping to very different horizontal positions over the season — is that positional
-   meaning intentional (e.g. "near" the jobs it's about to feed) or just wherever Excel had a free
-   column that week?
-2. **Load-number header semantics.** In the close-up example a header reads "8 8 8" — three cells,
-   the same number repeated three times, directly above a 3-wide box. Does that mean *one* load
-   (load 8) that needed 3 trailers, all sharing one load number, or three separate loads that
-   happen to be numbered sequentially and the image just repeats "8" as a mislabel/shorthand? This
-   matters because the existing `Load` model is one row per lorry/trailer with its own
-   `load_number` — if 3 trailers genuinely share one number, that's a schema question, not just a
-   display one.
-3. **What triggers a new "job box" boundary vs. the same equipment just continuing?** E.g. if a
-   piece of equipment goes straight from one job to the next with no yard stop, is that rendered
-   as two adjacent boxes touching, or does the diagram ever show a single flow-through visual
-   without a hard job/job boundary?
-4. Confirm the arrival/departure split is always exactly two lists per job box (never three or
-   more, e.g. for a job receiving equipment across two separate loads on different dates).
+1. **How does the Yard get its column(s)?** Resolved: it doesn't need dynamic packing — it's one
+   fixed column, always present. The original sheet's Yard block position/size was confirmed
+   meaningless ("wherever Excel happened to have a free column that week"). Instead of full
+   contents, the column shows only load-number markers on move dates, with a click-to-expand
+   side-panel (reusing the existing job-block panel pattern, D038) showing that day's full
+   in/out detail with matching colours. See §1.2.
+2. **Load-number header semantics.** Resolved: one number is always one load is always one lorry.
+   A repeated number (the "8 8 8" case) is the *same* load shown at more than one point along its
+   path as a visual/positional aid, not multiple trailers sharing a number — no schema change
+   needed. Distinct sequential numbers (e.g. "15, 16, 17") mean genuinely distinct lorries. See
+   §1.2 and §1.3.
+3. **What triggers a new "job box" boundary?** Resolved: a job's box spans first Build day to last
+   Break day (`_job_window()`, already implemented). Boxes don't need to touch — gaps are travel
+   time, and the diagram is a graph of movement over time, not a floor plan. See §1.2.
+4. **Is the arrival/departure split always exactly two lists?** Resolved: yes, always exactly two
+   (arrivals on top, departures below, mirrored) — but either list can span multiple origins/
+   destinations and multiple dates within it, not just one same-day batch. Confirmed directly
+   against the Roskilde/Yard → New Day → Reading/Yard worked example in §1.3.
 
 ---
 
@@ -251,7 +273,9 @@ be designed properly alongside §2.2 rather than bolted on afterward.
 
 ## 4. Still to resolve before implementation can start
 
-- §1.5's four open questions on the diagram's exact visual semantics.
+The diagram's own visual semantics (§1.5) are now fully resolved. What's left is entirely about
+the routing engine itself:
+
 - Whether "a week's time" (the re-plan review buffer) is a literal fixed delay, a manually
   triggered "re-plan now" action, or both (auto-suggest a re-plan after N days, planner confirms).
 - Whether the engine is a single big optimisation pass or an incremental one (route each new job's
@@ -259,3 +283,9 @@ be designed properly alongside §2.2 rather than bolted on afterward.
 - Exact algorithm for choosing direct-vs-via-yard when a direct move is geographically awkward but
   not impossible (the owner ruled out "spare capacity" matching but a direct-move-preference still
   needs *some* tie-breaking rule for genuinely marginal cases).
+
+With the diagram's design settled, the Loads Diagram itself (§1) could reasonably move to
+implementation next, ahead of the routing engine (§2) — it's a read/visualisation feature over
+already-existing `Load`/`EquipmentMovement`/`JobEquipmentRequirement` data (once loads exist to
+show), with no open design questions left, unlike §2 which still has real unresolved algorithm
+choices above.
