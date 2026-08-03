@@ -26,22 +26,27 @@ def test_foundation_migration_upgrades_clean_database(tmp_path: Path) -> None:
             "alembic_version",
             "audit_logs",
             "crew_availability",
+            "crew_availability_windows",
             "crew_activities",
-            "crew_assignments",
+            "crew_employment_types",
             "crew_journey_legs",
             "crew_members",
             "crew_movement_passengers",
             "crew_movements",
+            "crew_roles",
             "equipment_assets",
             "equipment_assignments",
             "equipment_compatibility",
+            "equipment_links",
             "equipment_movements",
             "equipment_types",
             "hauliers",
             "job_equipment_requirements",
             "job_phases",
             "job_tent_requirements",
+            "job_tent_sections",
             "jobs",
+            "local_crew_bookings",
             "locations",
             "load_cost_allocations",
             "load_items",
@@ -50,8 +55,6 @@ def test_foundation_migration_upgrades_clean_database(tmp_path: Path) -> None:
             "lorry_types",
             "route_cache",
             "supplier_invoices",
-            "tent_configuration_requirements",
-            "tent_configurations",
             "tent_families",
             "tentmaster_memberships",
             "tentmasters",
@@ -59,6 +62,6 @@ def test_foundation_migration_upgrades_clean_database(tmp_path: Path) -> None:
         }
         with migrated_engine.connect() as connection:
             revision = connection.scalar(text("SELECT version_num FROM alembic_version"))
-        assert revision == "73de560fde26"
+        assert revision == "99fa517eb199"
     finally:
         migrated_engine.dispose()

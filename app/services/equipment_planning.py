@@ -245,19 +245,28 @@ class EquipmentPlanningService:
     def derive_state(assignment: EquipmentAssignment, at: datetime | None = None) -> str:
         at = at or assignment.start_at
         job = assignment.requirement.job
-        if at < job.site_access_at:
+        if job.site_access_at is not None and at < job.site_access_at:
             return "allocated"
         build_phase = next(
             (phase for phase in job.phases if phase.phase_type.value == "build"), None
         )
-        strike_phase = next(
-            (phase for phase in job.phases if phase.phase_type.value == "strike"), None
+        break_phase = next(
+            (phase for phase in job.phases if phase.phase_type.value == "break"), None
         )
         if build_phase and build_phase.start_at <= at < build_phase.end_at:
             return "building"
-        if strike_phase and strike_phase.start_at <= at < strike_phase.end_at:
+        if break_phase and break_phase.start_at <= at < break_phase.end_at:
             return "striking"
-        if job.must_be_up_at <= at < job.strike_available_at:
+        tent_requirement = assignment.requirement.tent_requirement
+        contract_windows = (
+            [(tent_requirement.contracted_up_at, tent_requirement.contracted_down_at)]
+            if tent_requirement is not None
+            else [
+                (requirement.contracted_up_at, requirement.contracted_down_at)
+                for requirement in job.tent_requirements
+            ]
+        )
+        if any(up <= at < down for up, down in contract_windows):
             return "in_use"
         return "waiting"
 

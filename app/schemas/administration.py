@@ -56,15 +56,33 @@ class LocationData(AdministrationData):
 class TentFamilyData(AdministrationData):
     name: str = Field(min_length=1, max_length=100)
     description: str | None = None
+    pole_equipment_type_id: int | None = None
+    pole_count_multiplier: int = Field(default=2)
+    pole_count_offset: int = Field(default=-2)
+    default_build_hours: Decimal = Field(default=Decimal("0"), ge=0)
+    default_strike_hours: Decimal = Field(default=Decimal("0"), ge=0)
+    minimum_crew: int = Field(default=0, ge=0)
+    preferred_crew: int = Field(default=0, ge=0)
     active: bool = True
+
+    @model_validator(mode="after")
+    def validate_pole_formula_and_crew(self) -> Self:
+        if self.pole_count_multiplier == 0:
+            raise ValueError("Pole count multiplier cannot be zero")
+        if self.preferred_crew < self.minimum_crew:
+            raise ValueError("Preferred crew cannot be lower than minimum crew")
+        return self
 
 
 class EquipmentTypeData(AdministrationData):
+    # Codes are case-sensitive by design: "M" (20m middle) and "m" (15m middle) are genuinely
+    # different equipment types in the business's own notation, so this must not force a case.
     code: str = Field(min_length=1, max_length=50)
     name: str = Field(min_length=1, max_length=150)
     category: str = Field(min_length=1, max_length=100)
     tent_family_id: int | None = None
     tracking_mode: TrackingMode = TrackingMode.INDIVIDUAL
+    pack_size: int = Field(default=1, gt=0)
     section_capacity_units: Decimal = Field(default=Decimal("0"), ge=0)
     pole_capacity_units: Decimal = Field(default=Decimal("0"), ge=0)
     ancillary_capacity_units: Decimal = Field(default=Decimal("0"), ge=0)
@@ -73,11 +91,6 @@ class EquipmentTypeData(AdministrationData):
     maintenance_interval_days: int | None = Field(default=None, ge=0)
     active: bool = True
     notes: str | None = None
-
-    @field_validator("code")
-    @classmethod
-    def normalise_code(cls, value: str) -> str:
-        return value.upper()
 
 
 class EquipmentAssetData(AdministrationData):
@@ -110,38 +123,35 @@ class EquipmentAssetData(AdministrationData):
         return self
 
 
-class TentConfigurationData(AdministrationData):
-    tent_family_id: int
-    name: str = Field(min_length=1, max_length=100)
-    pole_count: int = Field(gt=0)
-    width_m: Decimal | None = Field(default=None, gt=0)
-    length_m: Decimal | None = Field(default=None, gt=0)
-    default_build_hours: Decimal = Field(default=Decimal("0"), ge=0)
-    default_strike_hours: Decimal = Field(default=Decimal("0"), ge=0)
-    minimum_crew: int = Field(default=0, ge=0)
-    preferred_crew: int = Field(default=0, ge=0)
-    active: bool = True
+class EquipmentLinkData(AdministrationData):
+    parent_equipment_type_id: int
+    child_equipment_type_id: int
+    quantity_per_parent: int = Field(gt=0)
     notes: str | None = None
 
     @model_validator(mode="after")
-    def validate_crew_levels(self) -> Self:
-        if self.preferred_crew < self.minimum_crew:
-            raise ValueError("Preferred crew cannot be lower than minimum crew")
+    def validate_not_self_link(self) -> Self:
+        if self.parent_equipment_type_id == self.child_equipment_type_id:
+            raise ValueError("An equipment type cannot link to itself")
         return self
 
 
-class TentConfigurationRequirementData(AdministrationData):
-    tent_configuration_id: int
-    equipment_type_id: int
-    quantity: int = Field(gt=0)
-    required_stage: BuildStage
-    individually_assignable: bool = True
+class CrewRoleData(AdministrationData):
+    name: str = Field(min_length=1, max_length=100)
+    is_default: bool = False
+    active: bool = True
+
+
+class CrewEmploymentTypeData(AdministrationData):
+    name: str = Field(min_length=1, max_length=100)
+    is_default: bool = False
+    active: bool = True
 
 
 class CrewMemberData(AdministrationData):
     name: str = Field(min_length=1, max_length=150)
-    role: str = Field(min_length=1, max_length=100)
-    employment_type: str = Field(min_length=1, max_length=100)
+    role_id: int
+    employment_type_id: int
     hourly_cost: Decimal = Field(default=Decimal("0"), ge=0)
     overtime_hourly_cost: Decimal = Field(default=Decimal("0"), ge=0)
     travel_hourly_cost: Decimal = Field(default=Decimal("0"), ge=0)
@@ -188,6 +198,19 @@ class CrewAvailabilityData(AdministrationData):
     @model_validator(mode="after")
     def validate_date_order(self) -> Self:
         if self.end_at < self.start_at:
+            raise ValueError("End date cannot be before start date")
+        return self
+
+
+class CrewAvailabilityWindowData(AdministrationData):
+    crew_member_id: int
+    start_at: date
+    end_at: date | None = None
+    notes: str | None = None
+
+    @model_validator(mode="after")
+    def validate_date_order(self) -> Self:
+        if self.end_at is not None and self.end_at < self.start_at:
             raise ValueError("End date cannot be before start date")
         return self
 

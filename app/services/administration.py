@@ -88,6 +88,15 @@ class AdministrationService:
         records = self.repository.list(field.option_model)
         return [(record.id, str(getattr(record, field.option_label))) for record in records]
 
+    def default_option_for(self, field: FormField) -> int | None:
+        """The id of `field.option_model`'s `is_default=True` row, if that model has one."""
+        if field.option_model is None or not hasattr(field.option_model, "is_default"):
+            return None
+        for record in self.repository.list(field.option_model):
+            if getattr(record, "is_default", False):
+                return int(record.id)
+        return None
+
     def display_value(self, record: Any, field: FormField) -> str:
         value = getattr(record, field.name)
         if value is None:
@@ -112,11 +121,11 @@ class AdministrationService:
             TentmasterMembership.crew_member_id == values["crew_member_id"],
             or_(
                 TentmasterMembership.end_at.is_(None),
-                TentmasterMembership.end_at >= values["start_at"],
+                TentmasterMembership.end_at > values["start_at"],
             ),
         ]
         if values["end_at"] is not None:
-            conditions.append(TentmasterMembership.start_at <= values["end_at"])
+            conditions.append(TentmasterMembership.start_at < values["end_at"])
         if exclude_id is not None:
             conditions.append(TentmasterMembership.id != exclude_id)
         overlap = self.session.scalar(select(TentmasterMembership.id).where(*conditions).limit(1))

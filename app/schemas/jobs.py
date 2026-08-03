@@ -10,6 +10,10 @@ from app.models.jobs import CommercialStatus, PhaseType, PlanningStatus, RecordS
 
 
 class JobData(BaseModel):
+    """Contract Up/Down dates are entered per tent (`JobTentRequirementData`), not here — a job
+    starts with only general, optional site-availability dates until at least one tent is added.
+    """
+
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     job_code: str = Field(min_length=1, max_length=50)
@@ -21,18 +25,12 @@ class JobData(BaseModel):
     confidence_percent: int | None = Field(default=None, ge=0, le=100)
     contract_revenue: Decimal = Field(default=Decimal("0"), ge=0)
     currency: str = Field(default="GBP", min_length=3, max_length=3)
-    site_access_at: datetime
-    must_be_up_at: datetime
-    show_start_at: datetime | None = None
-    show_end_at: datetime | None = None
-    strike_available_at: datetime
+    site_access_at: datetime | None = None
     site_clear_by: datetime | None = None
     maintenance_cover_required: bool = False
     catering_arrangement: str | None = None
     accommodation_arrangement: str | None = None
     ground_type: str | None = Field(default=None, max_length=100)
-    local_crew_supplied: int = Field(default=0, ge=0)
-    local_crew_required: int = Field(default=0, ge=0)
     build_scope: str | None = None
     strike_scope: str | None = None
     operational_notes: str | None = None
@@ -41,23 +39,9 @@ class JobData(BaseModel):
 
     @model_validator(mode="after")
     def validate_milestones(self) -> Self:
-        if self.site_access_at > self.must_be_up_at:
-            raise ValueError("Site access must be before the must-be-up milestone")
-        if self.must_be_up_at > self.strike_available_at:
-            raise ValueError("Strike availability must be after the must-be-up milestone")
-        if self.show_start_at and self.show_end_at and self.show_start_at > self.show_end_at:
-            raise ValueError("Show start must be before show end")
-        if self.site_clear_by and self.strike_available_at > self.site_clear_by:
-            raise ValueError("Site-clear deadline must be after strike availability")
-        for name in (
-            "site_access_at",
-            "must_be_up_at",
-            "show_start_at",
-            "show_end_at",
-            "strike_available_at",
-            "site_clear_by",
-            "deposit_received_at",
-        ):
+        if self.site_access_at and self.site_clear_by and self.site_access_at > self.site_clear_by:
+            raise ValueError("Site access must be before site clear")
+        for name in ("site_access_at", "site_clear_by", "deposit_received_at"):
             value = getattr(self, name)
             if value is not None and value.tzinfo is None:
                 raise ValueError(f"{name.replace('_', ' ').title()} must include a timezone")
@@ -65,22 +49,37 @@ class JobData(BaseModel):
 
 
 class JobTentRequirementData(BaseModel):
+    """`sequence` is a hyphen-delimited section-code sequence, e.g. "K-M-M-M-K" — matching the
+    notation already used in the business's own load-content lists — parsed by
+    `JobService.add_tent_requirement` into ordered `JobTentSection` rows.
+
+    `contracted_up_at`/`contracted_down_at` are fixed once set (see `JobPhase` docstring) and
+    drive the tent's auto-seeded Up phase plus the job's auto-seeded Build/Break phases.
+    """
+
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
-    tent_configuration_id: int
+    sequence: str = Field(min_length=1, max_length=500)
     quantity: int = Field(gt=0)
     custom_name: str | None = Field(default=None, max_length=200)
-    build_start_override: datetime | None = None
-    build_duration_override_hours: Decimal | None = Field(default=None, gt=0)
-    strike_duration_override_hours: Decimal | None = Field(default=None, gt=0)
-    required_crew_override: int | None = Field(default=None, ge=0)
+    contracted_up_at: datetime
+    contracted_down_at: datetime
     notes: str | None = None
+
+    @model_validator(mode="after")
+    def validate_dates(self) -> Self:
+        if self.contracted_down_at <= self.contracted_up_at:
+            raise ValueError("Contract down must be after contract up")
+        if self.contracted_up_at.tzinfo is None or self.contracted_down_at.tzinfo is None:
+            raise ValueError("Contract dates must include a timezone")
+        return self
 
 
 class JobPhaseData(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     phase_type: PhaseType
+    job_tent_requirement_id: int | None = None
     tentmaster_id: int | None = None
     start_at: datetime
     end_at: datetime
@@ -95,4 +94,23 @@ class JobPhaseData(BaseModel):
             raise ValueError("Phase end must be after phase start")
         if self.start_at.tzinfo is None or self.end_at.tzinfo is None:
             raise ValueError("Phase dates must include a timezone")
+        if (self.phase_type == PhaseType.UP) != (self.job_tent_requirement_id is not None):
+            raise ValueError("An Up phase must reference a tent; other phases must not")
+        return self
+
+
+class LocalCrewBookingData(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    headcount: int = Field(gt=0)
+    start_at: datetime
+    end_at: datetime
+    notes: str | None = None
+
+    @model_validator(mode="after")
+    def validate_dates(self) -> Self:
+        if self.end_at <= self.start_at:
+            raise ValueError("Booking end must be after booking start")
+        if self.start_at.tzinfo is None or self.end_at.tzinfo is None:
+            raise ValueError("Booking dates must include a timezone")
         return self

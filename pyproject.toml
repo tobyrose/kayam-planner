@@ -31,7 +31,9 @@ dev = [
 [project.scripts]
 kayam-backup = "app.commands.backup:main"
 kayam-export-json = "app.commands.export_json:main"
+kayam-reseed-from-reference = "app.commands.reseed_from_reference:main"
 kayam-seed = "app.commands.seed:main"
+kayam-sync-equipment-taxonomy = "app.commands.sync_equipment_taxonomy:main"
 kayam-workbook-diagnostic = "app.commands.workbook_diagnostic:main"
 
 [tool.setuptools.packages.find]

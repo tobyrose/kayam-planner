@@ -22,26 +22,30 @@
     {% endfor %}
   </dl>
 
-  {% if entity.slug == "tent-configurations" %}
+  {% if entity.slug == "equipment-types" %}
     <section class="mb-4" aria-labelledby="component-heading">
       <div class="d-flex justify-content-between align-items-center mb-2">
-        <h2 id="component-heading" class="h4 mb-0">Component requirements</h2>
+        <h2 id="component-heading" class="h4 mb-0">Linked equipment</h2>
         <a class="btn btn-sm btn-outline-primary"
-           href="/admin/configuration-requirements/new?tent_configuration_id={{ record.id }}">Add component</a>
+           href="/admin/equipment-links/new?parent_equipment_type_id={{ record.id }}">Add linked equipment</a>
       </div>
+      <p class="text-muted small">
+        Booking one of this equipment type implies this quantity of each linked type
+        automatically — never entered directly, never shown on the main loading list, only here
+        and in a load's detailed view.
+      </p>
       <div class="table-responsive border rounded bg-white">
         <table class="table table-sm mb-0">
-          <thead><tr><th>Equipment type</th><th>Quantity</th><th>Required stage</th><th></th></tr></thead>
+          <thead><tr><th>Linked equipment</th><th>Quantity each</th><th></th></tr></thead>
           <tbody>
             {% for component in components %}
               <tr>
                 <td>{{ component.equipment_type }}</td>
                 <td>{{ component.quantity }}</td>
-                <td>{{ component.stage }}</td>
-                <td class="text-end"><a href="/admin/configuration-requirements/{{ component.id }}">View</a></td>
+                <td class="text-end"><a href="/admin/equipment-links/{{ component.id }}">View</a></td>
               </tr>
             {% else %}
-              <tr><td colspan="4" class="text-secondary text-center py-3">No component requirements.</td></tr>
+              <tr><td colspan="3" class="text-secondary text-center py-3">No linked equipment.</td></tr>
             {% endfor %}
           </tbody>
         </table>

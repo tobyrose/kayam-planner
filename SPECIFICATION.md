@@ -90,16 +90,21 @@ The application must retain that high-density, continuous visual planning capabi
 
 ## 4.1 Modular tents
 
-A tent is assembled temporarily from reusable components.
+**Updated 2026-08-02 (D030):** A tent is not booked by a named size template (e.g. "10-pole").
+Named pole-count templates cannot faithfully represent what is actually booked, because many
+different section combinations produce the same pole count (e.g. a run of 8 poles could come from
+several different end/middle combinations). A tent is instead a sequence of section codes,
+matching exactly how the business already writes it — e.g. `K-M-M-M-K` (2 Kayam ends, 3 20m
+middles). Poles are never entered directly: they are derived from the sequence length via a
+per-family formula (Kayam's confirmed formula is `poles = sections × 2 − 2`), and the derived pole
+quantity is itself shown as a normal requirement (poles are a "big item" too, just not one a
+planner types in).
 
-Examples:
-
-- A 4-pole tent consists of 2 ends and 1 middle.
-- A 6-pole tent consists of 2 ends and 2 middles.
-- A 10-pole tent consists of 2 ends and 4 middles.
-- A 12-pole tent consists of 2 ends and 5 middles.
-
-Do not hard-code these rules. Use configurable tent templates.
+Only the visible/big items (ends, middles, triangles, covers, and the derived poles) are shown on
+the primary requirement/loading view. Each of those can additionally imply further hidden
+equipment — configurable per equipment type as a linked bill of materials (e.g. a 20m middle
+implies bale rings and side poles; a pole pair implies side guys and Tifors) — which is never
+entered directly and only shown in a detailed view, not the main loading list.
 
 A tent requirement is not itself a physical tent asset. It is a requirement fulfilled by assigning named physical assets.
 
@@ -107,23 +112,21 @@ Example:
 
 ```text
 Requirement:
-1 × 10-pole Kayam tent
+1 × K-M-M-M-K (Kayam)
 
-Required:
+Derived:
 2 Kayam ends
-4 compatible middles
-10 poles
-1 anchor set
-Ancillary equipment
+3 compatible middles
+4 pole pairs (5 sections × 2 − 2 = 8 physical poles ÷ 2 per pair)
+Linked equipment (hidden): bale rings, side guys, Tifors, ...
 ```
 
 Possible physical assignment:
 
 ```text
 Ends: K1, K2
-Middles: M3, M7, M9, M12
-Poles: P21–P30
-Anchor set: A3
+Middles: M3, M7, M9
+Poles: P21–P24
 ```
 
 ## 4.2 Individually tracked equipment
@@ -169,7 +172,11 @@ Some equipment will be individually tracked. Some may be quantity-tracked. V1 mu
 
 ## 4.3 Tentmasters and crew
 
-A Tentmaster is a working team or operational crew grouping.
+**Updated 2026-08-02 (resolves Q001):** A Tentmaster is a named individual who leads a crew, not
+an abstract team — confirmed directly by `reference/LOADS 26 V8.xlsx`'s `TM DETAILS` sheet
+(Martin Peers, Ross Markham, Jesse Thompson, Marley Yuill, each with initials, phone and email
+used throughout the reference data). "The Tentmaster's crew" is whoever currently belongs to
+their team via `TentmasterMembership`.
 
 The reference workbook includes four main Tentmaster lanes:
 
@@ -180,17 +187,27 @@ The reference workbook includes four main Tentmaster lanes:
 
 Crew members are individuals.
 
-Crew members can join and leave Tentmasters over time, so team membership must be date-based rather than a permanent foreign key.
+Crew members can join and leave Tentmasters over time, so team membership must be date-based
+rather than a permanent foreign key. Membership dates are half-open (`end_at` is the first day no
+longer active, exclusive), so a crew member can end with one Tentmaster and start with another on
+the same calendar date — see D023/D029 and resolved Q036.
+
+A job phase is assigned a Tentmaster, not individual crew. Headcount and named crew are **derived**
+from whoever is an active `TentmasterMembership` member of that Tentmaster during the phase's
+dates (excluding anyone with an overlapping unavailable-type `CrewAvailability` row) — a planner
+does not re-enter names per phase. There is no per-person override mechanism; a job's local/hired
+crew is booked separately as anonymous headcount over a job-level date range (`LocalCrewBooking` —
+see 7.22), not as named exceptions to the derived roster (D036).
 
 V1 must support:
 
-- Named crew assignments
+- Automatically derived crew presence per phase, from Tentmaster membership
 - Required headcount before names are known
-- Local crew placeholders
-- People moving between Tentmasters
+- Local/hired crew booked as anonymous headcount over a job-level date range
+- People moving between Tentmasters, including same-day, managed on a roster-over-time view
 - Crew starting and finishing
 - Crew availability and leave
-- Daily crew totals
+- Daily crew totals, per Tentmaster and in total
 - Hourly labour cost
 - Travel cost
 
@@ -592,6 +609,14 @@ Examples:
 
 ## 7.4 EquipmentType
 
+**Updated 2026-08-03 (D030, D037):** `code` is the real business letter/token vocabulary (K, M, m,
+s, T, SC, V, VOE, VNE, P, X, plus non-sequence types AD/SB/VB/RD/CT and linked-only types like
+BALE_RING) — case-sensitive by design, since M (20m middle) and m (15m middle), and K (Kayam End)
+and s (Siam End), are genuinely different types. `category` distinguishes "section" (bookable in a
+job's sequence), "pole" (derived from section count, never typed directly), "linked" (implied via
+`EquipmentLink`, never typed directly), and "ancillary" (tracked independently of any tent
+sequence).
+
 Fields:
 
 - id
@@ -600,6 +625,7 @@ Fields:
 - category
 - tent_family_id nullable
 - tracking_mode: individual or quantity
+- pack_size — physical units per tracked asset (e.g. 2 for a pole type tracked as a pair)
 - section_capacity_units
 - pole_capacity_units
 - ancillary_capacity_units
@@ -649,42 +675,45 @@ Fields:
 - source_reference
 - notes
 
-## 7.7 TentConfiguration
+## 7.7 TentFamily
+
+**Updated 2026-08-02 (D030):** replaces the removed `TentConfiguration` named-template model.
+Named pole-count sizes ("Kayam 10-pole") are gone; a family instead owns the formula that derives
+poles from a booked section sequence, plus the build/strike/crew defaults that used to live per
+named size.
 
 Fields:
 
 - id
-- tent_family_id
 - name
-- pole_count
-- width_m nullable
-- length_m nullable
+- description nullable
+- pole_equipment_type_id nullable — which EquipmentType fulfils this family's derived pole
+  requirement (e.g. the Kayam King Pole pair). No poles are derived while null.
+- pole_count_multiplier — default 2
+- pole_count_offset — default -2 (Kayam's confirmed formula: `poles = sections × 2 − 2`)
 - default_build_hours
 - default_strike_hours
 - minimum_crew
 - preferred_crew
 - active
-- notes
 
-Examples:
+## 7.8 EquipmentLink
 
-- Kayam 4-pole
-- Kayam 6-pole
-- Kayam 10-pole
-- Kayam 12-pole
-
-## 7.8 TentConfigurationRequirement
+**Updated 2026-08-02 (D030):** replaces the removed `TentConfigurationRequirement` flat BOM. A
+self-referential, admin-editable cascade: booking one equipment type implies a quantity of
+another, recursively (a child may itself be a parent of further links). Never entered directly by
+a planner and never shown on the main loading list — only in a load's detailed view.
 
 Fields:
 
 - id
-- tent_configuration_id
-- equipment_type_id
-- quantity
-- required_stage
-- individually_assignable
+- parent_equipment_type_id
+- child_equipment_type_id
+- quantity_per_parent
+- notes nullable
 
-This is the configurable bill of materials.
+A parent cannot link to itself; expansion additionally guards against indirect cycles at
+requirement-generation time.
 
 ## 7.9 Tentmaster
 
@@ -725,7 +754,8 @@ Fields:
 - tentmaster_id
 - crew_member_id
 - start_at
-- end_at nullable
+- end_at nullable — half-open: the first date no longer active. Open-ended when null. A crew
+  member may end one membership and start another on the same date (resolved Q036).
 - is_default
 - notes
 
@@ -820,6 +850,11 @@ Fields:
 
 ## 7.17 Job
 
+**Updated 2026-08-03 (D036):** Contract Up/Down dates moved off `Job` entirely — a job with
+multiple tents can have different contract dates per tent, so they now live on
+`JobTentRequirement.contracted_up_at`/`contracted_down_at` (7.18). `site_access_at` (now nullable)
+and `site_clear_by` are the only dates that genuinely apply to the whole job.
+
 Fields:
 
 - id
@@ -832,11 +867,7 @@ Fields:
 - confidence_percent nullable
 - contract_revenue
 - currency
-- site_access_at
-- must_be_up_at
-- show_start_at nullable
-- show_end_at nullable
-- strike_available_at
+- site_access_at nullable
 - site_clear_by nullable
 - maintenance_cover_required
 - catering_arrangement
@@ -884,18 +915,34 @@ Rules:
 
 ## 7.18 JobTentRequirement
 
+**Updated 2026-08-02/03 (D030, D036):** `tent_configuration_id` is removed. The booked tent is
+instead an ordered sequence of section codes, held in the related `JobTentSection` rows (7.18a) —
+e.g. K-M-M-M-K. `contracted_up_at`/`contracted_down_at` are this tent's fixed contract dates, set
+once when the tent is added (`contracted_down_at > contracted_up_at` enforced by a DB constraint);
+the old per-tent override fields (build start/duration, strike duration, required crew) are gone —
+the schedulable unit is now this tent's own `UP` `JobPhase` (7.21), freely reassignable within this
+window.
+
 Fields:
 
 - id
 - job_id
-- tent_configuration_id
 - quantity
 - custom_name
-- build_start_override nullable
-- build_duration_override_hours nullable
-- strike_duration_override_hours nullable
-- required_crew_override nullable
+- contracted_up_at
+- contracted_down_at
 - notes
+
+## 7.18a JobTentSection
+
+One position in a `JobTentRequirement`'s section sequence.
+
+Fields:
+
+- id
+- job_tent_requirement_id
+- sequence_index
+- equipment_type_id — must be a `category == "section"` EquipmentType
 
 ## 7.19 JobEquipmentRequirement
 
@@ -961,10 +1008,21 @@ Rules:
 
 ## 7.21 JobPhase
 
+**Updated 2026-08-03 (D036):** Phase types simplified to Build/Up/Break (`other` kept as a
+manual-only escape hatch); the old site_prep/handover/show/maintenance/strike/clear_site set is
+gone. `job_tent_requirement_id` ties an `up` phase to the specific tent it's for — a `CheckConstraint`
+enforces it's set if and only if `phase_type = 'up'`. `build`/`break` stay job-level
+(`job_tent_requirement_id` null) since the same crew typically builds/strikes every tent on a job
+together. An `up` phase's dates must fall within its tent's `contracted_up_at`/`contracted_down_at`
+window (validated in `JobService`); a tent's Up window can be freely split across several Up
+phases/Tentmasters (a crew handover mid-contract) via `add_phase()`/`delete_phase()` — phases are
+no longer auto-generated and continuously re-synced, only seeded once when a tent is added.
+
 Fields:
 
 - id
 - job_id
+- job_tent_requirement_id nullable — set if and only if phase_type is `up`
 - phase_type
 - tentmaster_id nullable
 - start_at
@@ -976,33 +1034,30 @@ Fields:
 
 Phase types:
 
-- site_prep
 - build
-- handover
-- show
-- maintenance
-- strike
-- clear_site
+- up
+- break
 - other
 
-## 7.22 CrewAssignment
+## 7.22 LocalCrewBooking
+
+**Updated 2026-08-03 (D036):** Replaces the old `CrewAssignment` ADD/EXCLUDE/placeholder override
+mechanism, which is deleted entirely. Local/hired crew is anonymous headcount only — no names, no
+per-person exceptions to the Tentmaster-derived roster (7.11, 4.3). A booking is job-level and
+date-ranged, not tied to a specific phase; it joins whichever phase(s) are active during its
+window (`roster.phase_roster()`), so moving or adjusting phases never requires re-entering local
+crew.
 
 Fields:
 
 - id
-- job_phase_id
-- crew_member_id nullable
-- placeholder_name nullable
-- tentmaster_id nullable
+- job_id
+- headcount
 - start_at
 - end_at
-- role
-- assignment_source
-- locked
-- hourly_cost_override nullable
 - notes
 
-Either a named person or placeholder must be present.
+`end_at > start_at` and `headcount > 0` are enforced by DB constraints.
 
 ## 7.23 EquipmentMovement
 
@@ -1125,15 +1180,21 @@ Modes:
 
 ## 7.28 CrewMovementPassenger
 
+Not affected by the D036 crew-model rework — unrelated to job-phase assignment.
+
 Fields:
 
 - id
 - crew_movement_id
 - crew_member_id nullable
-- placeholder_name nullable
+- placeholder_label nullable
+- quantity — 1 when named (crew_member_id set); may be >1 on a placeholder row
 - joining_tentmaster_id nullable
 - leaving_tentmaster_id nullable
 - notes
+
+Either a named person (quantity always 1) or a placeholder label (any quantity) must be present,
+not both.
 
 ## 7.29 RouteCache
 
@@ -1209,35 +1270,40 @@ Audit at least:
 
 ## 8.1 Date validation
 
-Validate:
+**Updated 2026-08-03 (D036):** `must_be_up_at`/`show_start_at`/`show_end_at`/`strike_available_at`
+no longer exist on `Job` — contract dates are per-tent (7.18). Validate:
 
 ```text
-site_access_at <= must_be_up_at
-must_be_up_at <= strike_available_at
-show_start_at <= show_end_at
-strike_available_at <= site_clear_by
+job_tent_requirement.contracted_down_at > job_tent_requirement.contracted_up_at  (DB constraint)
+job.site_clear_by >= job.site_access_at  (DB constraint, both nullable)
+up_phase.start_at/end_at within its tent's contracted_up_at/contracted_down_at  (JobService)
 ```
 
 Allow unusual cases only through explicit override and warning.
 
 ## 8.2 Requirement expansion
 
-When a tent configuration is added:
+**Updated 2026-08-02 (D030):** expansion is now recursive rather than a flat per-template lookup.
+When a tent requirement (a section sequence) is added:
 
-1. Read the component template.
-2. Multiply by quantity.
-3. Create or update equipment requirements.
-4. Preserve manual additions.
-5. Calculate required-on-site time from build stage.
+1. Add one unit of each section's equipment type per booked tent.
+2. Derive the pole quantity from the sequence length via the family's formula, divided by the
+   pole equipment type's pack size.
+3. For every section and every derived pole quantity, recursively cascade through any configured
+   `EquipmentLink` rows (a linked child may itself have further links), cycle-guarded.
+4. Multiply everything by the tent requirement's quantity.
+5. Create or update equipment requirements from the combined totals.
+6. Preserve manual additions (only `GENERATED`-source rows are ever touched).
+7. Calculate required-on-site time from build stage.
 
 Example:
 
 ```text
-2 × 6-pole Kayam
-= 4 ends
-+ 4 middles
-+ 12 poles
-+ configured anchors and ancillary equipment
+2 × (K-M-M-K)
+= 4 ends (2 K × 2 tents)
++ 4 middles (2 M × 2 tents)
++ 6 poles (per tent: 4 sections × 2 − 2 = 6 physical poles ÷ 2 per pair = 3 pairs; × 2 tents = 6)
++ cascaded linked equipment (bale rings under M, side guys/Tifors under the poles, ...)
 ```
 
 ## 8.3 Build stages
@@ -1343,12 +1409,17 @@ Use configurable thresholds.
 
 ## 8.10 Crew conflicts
 
+**Updated 2026-08-03 (D036):** There is no per-person assignment row to check for overlap anymore
+— crew presence is derived from Tentmaster membership. The equivalent checks are: a Tentmaster
+double-booked across two overlapping phases (implemented), and a phase's derived+booked headcount
+falling short of `required_headcount` (implemented). An unavailable crew member is reflected as a
+greyed-out roster display (D035) rather than a standalone conflict warning.
+
 Warn when:
 
-- One person has overlapping assignments.
-- A person is unavailable.
+- A Tentmaster is double-booked between overlapping phases.
+- Required headcount is not met (derived roster + local crew bookings, short of required).
 - Travel between assignments is infeasible.
-- Required headcount is not met.
 - A van is over passenger capacity.
 - A crew movement arrives after work begins.
 
@@ -1579,9 +1650,38 @@ Suggested:
 - Admin
 - Reports
 
-## 11.3 Combined yearly board
+## 11.3 Season board and flow diagram
 
-Principal V1 view.
+**Updated 2026-08-03 (D031, D032, D033; rebuilt again per D038):** The single combined board
+originally envisioned below shipped as **two separate pages** instead, both dates-down-the-side/
+one-row-per-day like the reference workbook, sharing the same block/segment CSS so a job reads
+identically on both:
+
+- **`/planning` (season board)** — one column per Tentmaster (a multi-day phase/activity renders
+  as one contiguous bar per column, not a repeated per-day flag), plus a dynamic number of
+  "Unassigned / quoted" columns (interval-packed: a job keeps the same column for the whole span
+  of its currently-unassigned phases, using as few concurrent columns as the range actually
+  needs — not a single flat lane). The separate "Milestones" and "Equipment" columns from the
+  first rebuild are gone (D038): equipment-asset movement is now shown only on the flow diagram
+  below, and everything else — contract Up/Down markers, load arrive/depart, crew-move
+  references, local-crew arrive/depart — is folded into stacked lines inside the relevant
+  Tentmaster/Unassigned block itself, auto-growing the block vertically rather than living in a
+  side column. A job block can be dragged onto a different Tentmaster column to reassign it;
+  clicking a job opens a read-only side panel showing the job's full detail (11.5); clicking the
+  "+" in an empty Tentmaster cell opens a small form to add a `CrewActivity` for that Tentmaster
+  over a date range. The
+  standalone Crew Board (`/planning/crew`) is deleted — the season board is now the one place to
+  both see and add crew activities.
+- **`/planning/flow` (loads/equipment flow diagram)** — one column per location instead of
+  Tentmaster; each location's column shows a block for every day a job occupies that site (job
+  code + booked tent section sequence, e.g. `KMMMK`); an SVG line overlay draws each load's
+  journey from its origin column/depart-date to its destination column/arrival-date.
+
+Both pages must show asset continuity, as the original vision below required — that requirement
+carried through even though the single-page layout didn't.
+
+<details>
+<summary>Original V1 vision (pre-D031/D032, superseded by the two-page shape above)</summary>
 
 Layout:
 
@@ -1606,9 +1706,21 @@ Show:
 - Contract milestones
 - Warnings
 
-The first implementation may simplify the exact workbook geometry, but it must show asset continuity.
+</details>
 
 ## 11.4 Dragging to create work
+
+**Updated 2026-08-03 (D033, D038):** What's actually shipped is drag-*an-existing-block* onto a
+different Tentmaster column to reassign it (`POST /planning/move-phase`, D033) — not
+drag-across-empty-cells to create new work, as originally envisioned below. Creating work directly
+from the board shipped scoped down from the original vision: clicking the "+" in an empty cell in
+a Tentmaster's column opens a small form (`GET/POST /planning/activity/new`) to create a
+`CrewActivity` for that Tentmaster over a date range (reusing `create_activity()`), redirecting
+back to the board's current date range on save; new jobs are still created via the Jobs page, not
+the board.
+
+<details>
+<summary>Original V1 vision (broader scope than the planned chunk-5 version)</summary>
 
 In a Tentmaster lane:
 
@@ -1626,7 +1738,19 @@ In a Tentmaster lane:
 
 Do not paint cells. Create structured records.
 
+</details>
+
 ## 11.5 Job editor
+
+**Updated 2026-08-03 (D038):** The job page splits into a read view (`GET /jobs/{id}`, the
+default) and a separate edit surface (`GET/POST /jobs/{id}/edit`) — reversing the earlier
+inline-editable version. The read view shows every section below read-only, with a single "Edit
+job" button; all add/remove/edit forms (tent requirements, phases, local crew, ancillary
+equipment, equipment-assignment approval) live only on the edit page, appended after the
+Commercial/Location/Dates/Operations fields shown there. `GET /jobs/{id}/summary` renders the
+same read-only content as a bare fragment (no navigation chrome) for the season board's job side
+panel — click a job block on `/planning` to see it without leaving the board, plus an Edit button
+through to the full edit page.
 
 Sections:
 
@@ -1648,27 +1772,34 @@ Sections:
 
 ### Dates
 
+**Updated 2026-08-03 (D036):** Contract Up/Down are per-tent now, not job-wide — moved into the
+Tent requirements section below.
+
 - Site access
-- Must be up
-- Show start
-- Show end
-- Strike available
 - Site clear
 
 ### Tent requirements
 
-- Tent configuration
+**Updated 2026-08-03 (D030, D036):** "Tent configuration" replaced by a section sequence; contract
+dates moved in from the job-wide Dates section above.
+
+- Section sequence (e.g. `K-M-M-M-K`)
+- Contract Up / Contract Down (per tent)
 - Quantity
-- Overrides
 - Generated component summary
 
 ### Crew
 
-- Tentmaster
-- Required headcount
-- Named crew
-- Local crew
-- Maintenance crew
+**Updated 2026-08-03 (D036):** "Named crew" is derived from Tentmaster membership, not entered —
+there's no per-person editing here. Local crew is job-level headcount, not tied to a phase. There
+is no separate "maintenance crew" concept — `PhaseType.MAINTENANCE` was removed; only the
+job-level `maintenance_cover_required` boolean survives.
+
+- Tentmaster (per phase)
+- Required headcount (per phase)
+- Derived crew (read-only, from Tentmaster membership)
+- Local/hired crew (job-level, date-ranged headcount)
+- Maintenance cover required (boolean)
 
 ### Equipment
 
@@ -1722,10 +1853,9 @@ Support:
 Support:
 
 - Isolate a Tentmaster.
-- Click crew count to see names.
-- Add/remove people.
-- Move a person between Tentmasters.
-- Add local crew placeholder.
+- Click crew count to see names (derived from Tentmaster membership).
+- Move a person between Tentmasters (roster board, D029).
+- Add local/hired crew headcount to a job, date-ranged, no name (`LocalCrewBooking`, D036).
 - Highlight an individual’s season.
 - Show shortages.
 - Show van-capacity warnings.

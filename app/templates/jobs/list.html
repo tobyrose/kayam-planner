@@ -7,12 +7,12 @@
   </div>
   <div class="table-responsive border rounded bg-white">
     <table class="table table-sm table-hover align-middle mb-0 admin-table">
-      <thead><tr><th>Code</th><th>Job</th><th>Location</th><th>Site access</th><th>Must be up</th><th>Commercial</th><th>Planning</th><th></th></tr></thead>
+      <thead><tr><th>Code</th><th>Job</th><th>Location</th><th>Site access</th><th>Earliest up</th><th>Commercial</th><th>Planning</th><th></th></tr></thead>
       <tbody>
         {% for job in jobs %}
           <tr class="job-status-{{ job.commercial_status.value }}">
             <td>{{ job.job_code }}</td><td>{{ job.name }}</td><td>{{ job.location.name }}</td>
-            <td>{{ job.site_access_at.strftime('%d %b %Y %H:%M') }}</td><td>{{ job.must_be_up_at.strftime('%d %b %Y %H:%M') }}</td>
+            <td>{{ job.site_access_at.strftime('%d %b %Y %H:%M') if job.site_access_at else '—' }}</td><td>{{ job.earliest_up_at.strftime('%d %b %Y %H:%M') if job.earliest_up_at else '—' }}</td>
             <td><span class="status-label">{{ job.commercial_status.value|replace('_', ' ') }}</span></td>
             <td>{{ job.planning_status.value|replace('_', ' ') }}</td><td><a href="/jobs/{{ job.id }}">Open</a></td>
           </tr>

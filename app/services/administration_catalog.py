@@ -11,8 +11,12 @@ from app.models.administration import (
     BuildStage,
     CrewAvailability,
     CrewAvailabilityStatus,
+    CrewAvailabilityWindow,
+    CrewEmploymentType,
     CrewMember,
+    CrewRole,
     EquipmentAsset,
+    EquipmentLink,
     EquipmentType,
     Haulier,
     Location,
@@ -20,8 +24,6 @@ from app.models.administration import (
     Lorry,
     LorryType,
     OwnershipType,
-    TentConfiguration,
-    TentConfigurationRequirement,
     TentFamily,
     Tentmaster,
     TentmasterMembership,
@@ -30,15 +32,17 @@ from app.models.administration import (
 )
 from app.schemas.administration import (
     CrewAvailabilityData,
+    CrewAvailabilityWindowData,
+    CrewEmploymentTypeData,
     CrewMemberData,
+    CrewRoleData,
     EquipmentAssetData,
+    EquipmentLinkData,
     EquipmentTypeData,
     HaulierData,
     LocationData,
     LorryData,
     LorryTypeData,
-    TentConfigurationData,
-    TentConfigurationRequirementData,
     TentFamilyData,
     TentmasterData,
     TentmasterMembershipData,
@@ -74,6 +78,10 @@ class EntityDefinition:
     schema: type[BaseModel]
     fields: tuple[FormField, ...]
     list_fields: tuple[str, ...]
+    hidden: bool = False
+    """Excluded from the admin home index and top-level nav when the entity is only ever
+    edited nested inside another record's page (e.g. crew availability, edited from the crew
+    member's own edit page) rather than browsed as its own section."""
 
     def field(self, name: str) -> FormField:
         return next(field for field in self.fields if field.name == name)
@@ -142,9 +150,54 @@ ENTITY_DEFINITIONS = (
         (
             FormField("name", "Name", required=True),
             FormField("description", "Description", "textarea"),
+            FormField(
+                "pole_equipment_type_id",
+                "Pole equipment type",
+                "select",
+                option_model=EquipmentType,
+                option_label="code",
+                help_text="Which equipment type fulfils this family's derived pole requirement "
+                "(e.g. P). Leave blank until known — no poles will be derived without it.",
+            ),
+            FormField(
+                "pole_count_multiplier",
+                "Pole count multiplier",
+                "number",
+                required=True,
+                default=2,
+                step="1",
+            ),
+            FormField(
+                "pole_count_offset",
+                "Pole count offset",
+                "number",
+                required=True,
+                default=-2,
+                step="1",
+                help_text="poles = sections × multiplier + offset. Kayam's known formula is "
+                "sections×2−2 (multiplier=2, offset=-2).",
+            ),
+            FormField(
+                "default_build_hours",
+                "Default build hours",
+                "number",
+                required=True,
+                default=0,
+                step="0.25",
+            ),
+            FormField(
+                "default_strike_hours",
+                "Default strike hours",
+                "number",
+                required=True,
+                default=0,
+                step="0.25",
+            ),
+            FormField("minimum_crew", "Minimum crew", "number", required=True, default=0),
+            FormField("preferred_crew", "Preferred crew", "number", required=True, default=0),
             ACTIVE,
         ),
-        ("name", "active"),
+        ("name", "pole_equipment_type_id", "minimum_crew", "preferred_crew", "active"),
     ),
     EntityDefinition(
         "equipment-types",
@@ -154,10 +207,33 @@ ENTITY_DEFINITIONS = (
         EquipmentType,
         EquipmentTypeData,
         (
-            FormField("code", "Code", required=True),
+            FormField(
+                "code",
+                "Code",
+                required=True,
+                help_text='Case-sensitive — "M" (20m middle) and "m" (15m middle) are different '
+                "types.",
+            ),
             FormField("name", "Name", required=True),
-            FormField("category", "Category", required=True),
+            FormField(
+                "category",
+                "Category",
+                required=True,
+                help_text='"section" = bookable in a tent sequence, "pole" = derived from '
+                'section count, "linked" = implied by another type, "ancillary" = tracked '
+                "independently.",
+            ),
             FormField("tent_family_id", "Tent family", "select", option_model=TentFamily),
+            FormField(
+                "pack_size",
+                "Pack size",
+                "number",
+                required=True,
+                default=1,
+                step="1",
+                help_text="Physical units per tracked asset (e.g. 2 for a pole type sold/tracked "
+                "as a pair).",
+            ),
             FormField(
                 "tracking_mode",
                 "Tracking mode",
@@ -246,92 +322,68 @@ ENTITY_DEFINITIONS = (
         ("asset_code", "equipment_type_id", "current_status", "serviceable", "active"),
     ),
     EntityDefinition(
-        "tent-configurations",
-        "Tent configuration",
-        "Tent configurations",
+        "equipment-links",
+        "Linked equipment",
+        "Linked equipment",
         "Tent and equipment",
-        TentConfiguration,
-        TentConfigurationData,
+        EquipmentLink,
+        EquipmentLinkData,
         (
             FormField(
-                "tent_family_id",
-                "Tent family",
-                "select",
-                required=True,
-                option_model=TentFamily,
-            ),
-            FormField("name", "Name", required=True),
-            FormField("pole_count", "Pole count", "number", required=True, step="1"),
-            FormField("width_m", "Width (m)", "number", step="0.01"),
-            FormField("length_m", "Length (m)", "number", step="0.01"),
-            FormField(
-                "default_build_hours",
-                "Default build hours",
-                "number",
-                required=True,
-                default=0,
-                step="0.25",
-            ),
-            FormField(
-                "default_strike_hours",
-                "Default strike hours",
-                "number",
-                required=True,
-                default=0,
-                step="0.25",
-            ),
-            FormField("minimum_crew", "Minimum crew", "number", required=True, default=0),
-            FormField("preferred_crew", "Preferred crew", "number", required=True, default=0),
-            ACTIVE,
-            NOTES,
-        ),
-        ("name", "tent_family_id", "pole_count", "minimum_crew", "preferred_crew", "active"),
-    ),
-    EntityDefinition(
-        "configuration-requirements",
-        "Configuration component",
-        "Configuration components",
-        "Tent and equipment",
-        TentConfigurationRequirement,
-        TentConfigurationRequirementData,
-        (
-            FormField(
-                "tent_configuration_id",
-                "Tent configuration",
-                "select",
-                required=True,
-                option_model=TentConfiguration,
-            ),
-            FormField(
-                "equipment_type_id",
-                "Equipment type",
+                "parent_equipment_type_id",
+                "Parent (booked) equipment type",
                 "select",
                 required=True,
                 option_model=EquipmentType,
                 option_label="code",
             ),
-            FormField("quantity", "Quantity", "number", required=True, step="1"),
             FormField(
-                "required_stage",
-                "Required stage",
+                "child_equipment_type_id",
+                "Linked (derived) equipment type",
                 "select",
                 required=True,
-                choices=enum_choices(BuildStage),
+                option_model=EquipmentType,
+                option_label="code",
             ),
             FormField(
-                "individually_assignable",
-                "Individually assignable",
-                "checkbox",
-                default=True,
+                "quantity_per_parent",
+                "Quantity per parent",
+                "number",
+                required=True,
+                step="1",
+                help_text="e.g. an M implies 2 of this linked type.",
             ),
+            NOTES,
         ),
+        ("parent_equipment_type_id", "child_equipment_type_id", "quantity_per_parent"),
+    ),
+    EntityDefinition(
+        "crew-roles",
+        "Crew role",
+        "Crew roles",
+        "Crew",
+        CrewRole,
+        CrewRoleData,
         (
-            "tent_configuration_id",
-            "equipment_type_id",
-            "quantity",
-            "required_stage",
-            "individually_assignable",
+            FormField("name", "Name", required=True),
+            FormField("is_default", "Default for new crew members", "checkbox"),
+            ACTIVE,
         ),
+        ("name", "is_default", "active"),
+    ),
+    EntityDefinition(
+        "crew-employment-types",
+        "Employment type",
+        "Employment types",
+        "Crew",
+        CrewEmploymentType,
+        CrewEmploymentTypeData,
+        (
+            FormField("name", "Name", required=True),
+            FormField("is_default", "Default for new crew members", "checkbox"),
+            ACTIVE,
+        ),
+        ("name", "is_default", "active"),
     ),
     EntityDefinition(
         "crew-members",
@@ -342,8 +394,14 @@ ENTITY_DEFINITIONS = (
         CrewMemberData,
         (
             FormField("name", "Name", required=True),
-            FormField("role", "Role", required=True),
-            FormField("employment_type", "Employment type", required=True),
+            FormField("role_id", "Role", "select", required=True, option_model=CrewRole),
+            FormField(
+                "employment_type_id",
+                "Employment type",
+                "select",
+                required=True,
+                option_model=CrewEmploymentType,
+            ),
             FormField(
                 "hourly_cost", "Hourly cost", "number", required=True, default=0, step=MONEY_STEP
             ),
@@ -378,7 +436,7 @@ ENTITY_DEFINITIONS = (
             ACTIVE,
             NOTES,
         ),
-        ("name", "role", "employment_type", "can_drive_van", "can_drive_hgv", "active"),
+        ("name", "role_id", "employment_type_id", "can_drive_van", "can_drive_hgv", "active"),
     ),
     EntityDefinition(
         "tentmasters",
@@ -431,7 +489,13 @@ ENTITY_DEFINITIONS = (
                 option_model=CrewMember,
             ),
             FormField("start_at", "Start date", "date", required=True),
-            FormField("end_at", "End date", "date"),
+            FormField(
+                "end_at",
+                "End date",
+                "date",
+                help_text="First day no longer active — leave blank if ongoing. A crew member "
+                "can start with another Tentmaster on this same date.",
+            ),
             FormField("is_default", "Default team", "checkbox", default=True),
             NOTES,
         ),
@@ -464,6 +528,36 @@ ENTITY_DEFINITIONS = (
             NOTES,
         ),
         ("crew_member_id", "start_at", "end_at", "status"),
+        hidden=True,
+    ),
+    EntityDefinition(
+        "crew-availability-windows",
+        "Availability window",
+        "Availability windows",
+        "Crew",
+        CrewAvailabilityWindow,
+        CrewAvailabilityWindowData,
+        (
+            FormField(
+                "crew_member_id",
+                "Crew member",
+                "select",
+                required=True,
+                option_model=CrewMember,
+            ),
+            FormField(
+                "start_at",
+                "Available from",
+                "date",
+                required=True,
+                help_text="Multiple windows are allowed per crew member. If a crew member has "
+                "no windows at all, they are treated as always available.",
+            ),
+            FormField("end_at", "Available until", "date", help_text="Leave blank if ongoing."),
+            NOTES,
+        ),
+        ("crew_member_id", "start_at", "end_at"),
+        hidden=True,
     ),
     EntityDefinition(
         "lorry-types",
@@ -670,5 +764,7 @@ ENTITY_BY_SLUG = {definition.slug: definition for definition in ENTITY_DEFINITIO
 def grouped_entities() -> dict[str, list[EntityDefinition]]:
     groups: dict[str, list[EntityDefinition]] = {}
     for definition in ENTITY_DEFINITIONS:
+        if definition.hidden:
+            continue
         groups.setdefault(definition.group, []).append(definition)
     return groups

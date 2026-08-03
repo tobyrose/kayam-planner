@@ -11,7 +11,7 @@ from starlette.datastructures import FormData
 
 from app.database import get_db_session
 from app.main_paths import TEMPLATE_DIRECTORY
-from app.models.administration import TentConfiguration
+from app.models.administration import CrewMember, EquipmentType
 from app.services.administration import (
     AdministrationError,
     AdministrationService,
@@ -36,6 +36,13 @@ def get_definition(entity_slug: str) -> EntityDefinition:
     return definition
 
 
+def _redirect_target(candidate: str | None, default: str) -> str:
+    """Only ever redirect back into /admin/ — never trust an open redirect target."""
+    if candidate and candidate.startswith("/admin/"):
+        return candidate
+    return default
+
+
 def form_values(definition: EntityDefinition, form: FormData) -> dict[str, Any]:
     values: dict[str, Any] = {}
     for field in definition.fields:
@@ -47,8 +54,16 @@ def form_values(definition: EntityDefinition, form: FormData) -> dict[str, Any]:
     return values
 
 
-def initial_values(definition: EntityDefinition, request: Request) -> dict[str, Any]:
-    values = {field.name: field.default for field in definition.fields}
+def initial_values(
+    definition: EntityDefinition, request: Request, service: AdministrationService
+) -> dict[str, Any]:
+    values: dict[str, Any] = {}
+    for field in definition.fields:
+        values[field.name] = (
+            field.default
+            if field.default is not None
+            else service.default_option_for(field)
+        )
     for field in definition.fields:
         query_value = request.query_params.get(field.name)
         if query_value is not None:
@@ -134,7 +149,9 @@ def new_record_form(
     return templates.TemplateResponse(
         request=request,
         name="admin/form.html",
-        context=form_context(request, definition, service, initial_values(definition, request)),
+        context=form_context(
+            request, definition, service, initial_values(definition, request, service)
+        ),
     )
 
 
@@ -146,7 +163,12 @@ async def create_record(
 ) -> Response:
     definition = get_definition(entity_slug)
     service = AdministrationService(session)
-    payload = form_values(definition, await request.form())
+    form = await request.form()
+    redirect_to = _redirect_target(
+        str(form.get("redirect_to")) if form.get("redirect_to") else None,
+        "",
+    )
+    payload = form_values(definition, form)
     try:
         record = service.create(definition, payload)
     except ValidationError as error:
@@ -169,7 +191,7 @@ async def create_record(
             context=form_context(request, definition, service, payload, errors=[str(error)]),
             status_code=409,
         )
-    return RedirectResponse(f"/admin/{entity_slug}/{record.id}", status_code=303)
+    return RedirectResponse(redirect_to or f"/admin/{entity_slug}/{record.id}", status_code=303)
 
 
 @router.get("/{entity_slug}/{record_id}", response_class=HTMLResponse)
@@ -187,15 +209,15 @@ def record_detail(
         raise HTTPException(status_code=404, detail=str(error)) from error
     details = [(field.label, service.display_value(record, field)) for field in definition.fields]
     components = []
-    if isinstance(record, TentConfiguration):
+    if isinstance(record, EquipmentType):
         components = [
             {
-                "id": requirement.id,
-                "equipment_type": requirement.equipment_type.code,
-                "quantity": requirement.quantity,
-                "stage": requirement.required_stage.value.replace("_", " ").title(),
+                "id": link.id,
+                "equipment_type": link.child_equipment_type.code,
+                "quantity": link.quantity_per_parent,
+                "stage": "",
             }
-            for requirement in record.requirements
+            for link in record.outgoing_links
         ]
     return templates.TemplateResponse(
         request=request,
@@ -222,17 +244,22 @@ def edit_record_form(
         record = service.get_record(definition, record_id)
     except RecordNotFoundError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
-    return templates.TemplateResponse(
-        request=request,
-        name="admin/form.html",
-        context=form_context(
-            request,
-            definition,
-            service,
-            record_values(definition, record),
-            record_id=record_id,
-        ),
+    context = form_context(
+        request,
+        definition,
+        service,
+        record_values(definition, record),
+        record_id=record_id,
     )
+    if isinstance(record, CrewMember):
+        context["availability"] = sorted(record.availability, key=lambda row: row.start_at)
+        context["availability_windows"] = sorted(
+            record.availability_windows, key=lambda row: row.start_at
+        )
+        context["availability_statuses"] = ENTITY_BY_SLUG["crew-availability"].field(
+            "status"
+        ).choices
+    return templates.TemplateResponse(request=request, name="admin/form.html", context=context)
 
 
 @router.post("/{entity_slug}/{record_id}/edit", response_model=None)
@@ -244,7 +271,12 @@ async def update_record(
 ) -> Response:
     definition = get_definition(entity_slug)
     service = AdministrationService(session)
-    payload = form_values(definition, await request.form())
+    form = await request.form()
+    redirect_to = _redirect_target(
+        str(form.get("redirect_to")) if form.get("redirect_to") else None,
+        "",
+    )
+    payload = form_values(definition, form)
     try:
         service.update(definition, record_id, payload)
     except ValidationError as error:
@@ -276,7 +308,7 @@ async def update_record(
             ),
             status_code=status_code,
         )
-    return RedirectResponse(f"/admin/{entity_slug}/{record_id}", status_code=303)
+    return RedirectResponse(redirect_to or f"/admin/{entity_slug}/{record_id}", status_code=303)
 
 
 @router.post("/{entity_slug}/{record_id}/delete", response_model=None)
@@ -284,6 +316,7 @@ def delete_record(
     entity_slug: str,
     record_id: int,
     session: SessionDependency,
+    redirect_to: str | None = None,
 ) -> Response:
     definition = get_definition(entity_slug)
     service = AdministrationService(session)
@@ -293,4 +326,6 @@ def delete_record(
         raise HTTPException(status_code=404, detail=str(error)) from error
     except AdministrationError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
-    return RedirectResponse(f"/admin/{entity_slug}", status_code=303)
+    return RedirectResponse(
+        _redirect_target(redirect_to, f"/admin/{entity_slug}"), status_code=303
+    )

@@ -8,33 +8,35 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.commands.seed import seed_development_data
-from app.models.administration import CrewMember, Location, LorryType
+from app.models.administration import (
+    CrewMember,
+    Location,
+    LorryType,
+    Tentmaster,
+    TentmasterMembership,
+)
 from app.models.costing import LoadCostAllocation, SupplierInvoice
 from app.models.crew_movements import CrewMovement, CrewMovementPassenger
-from app.models.crew_planning import CrewAssignment
 from app.models.jobs import Job
 from app.models.logistics import EstimateSource
 from app.services.costing import CostingError, CostingService
+from app.services.jobs import JobService
 from app.services.logistics import LogisticsService
 
 
 def test_labour_and_travel_estimates(session: Session) -> None:
     seed_development_data(session)
     job = session.scalar(select(Job).where(Job.job_code == "DEMO-ROS-26"))
-    crew = session.scalar(select(CrewMember))
-    assert job is not None and crew is not None
+    crew = session.scalar(select(CrewMember).where(CrewMember.name == "Demo Crew 1"))
+    team = session.scalar(select(Tentmaster).where(Tentmaster.name == "Max/Martin"))
+    assert job is not None and crew is not None and team is not None
     crew.hourly_cost = Decimal("20")
     crew.travel_hourly_cost = Decimal("10")
     phase = job.phases[0]
-    session.add(
-        CrewAssignment(
-            job_phase_id=phase.id,
-            crew_member_id=crew.id,
-            start_at=phase.start_at,
-            end_at=phase.start_at + timedelta(hours=8),
-            role="Crew",
-        )
-    )
+    # An 8-hour phase derives its whole duration for anyone on the roster, so pin the phase
+    # duration to keep the expected cost simple rather than depending on the generated length.
+    phase.end_at = phase.start_at + timedelta(hours=8)
+    phase.tentmaster_id = team.id
     origin = session.scalar(select(Location).where(Location.id != job.location_id))
     assert origin is not None
     movement = CrewMovement(
@@ -52,6 +54,51 @@ def test_labour_and_travel_estimates(session: Session) -> None:
     service = CostingService(session)
     assert service.crew_work_cost(job.id) == Decimal("160.00")
     assert service.crew_travel_cost(job) == Decimal("40.00")
+
+
+def test_labour_cost_sums_every_derived_roster_member(session: Session) -> None:
+    seed_development_data(session)
+    job = session.scalar(select(Job).where(Job.job_code == "DEMO-ROS-26"))
+    crew = session.scalar(select(CrewMember).where(CrewMember.name == "Demo Crew 1"))
+    loaned = session.scalar(select(CrewMember).where(CrewMember.name == "Demo Crew 2"))
+    team = session.scalar(select(Tentmaster).where(Tentmaster.name == "Max/Martin"))
+    assert job is not None and crew is not None and loaned is not None and team is not None
+    crew.hourly_cost = Decimal("20")
+    loaned.hourly_cost = Decimal("50")
+    phase = job.phases[0]
+    phase.end_at = phase.start_at + timedelta(hours=8)
+    phase.tentmaster_id = team.id
+    # Add Demo Crew 2 onto the same Tentmaster's roster for the phase's whole window, so both
+    # are derived onto it — there's no more per-phase "loan" override, only roster membership.
+    session.add(
+        TentmasterMembership(
+            tentmaster_id=team.id,
+            crew_member_id=loaned.id,
+            start_at=phase.start_at.date(),
+            end_at=None,
+        )
+    )
+    session.commit()
+
+    assert CostingService(session).crew_work_cost(job.id) == Decimal("560.00")
+
+
+def test_labour_cost_excludes_local_crew(session: Session) -> None:
+    """Local crew are anonymous headcount, not named people with a rate — they count toward
+    `PhaseRoster.assigned` but never toward labour cost."""
+    seed_development_data(session)
+    job = session.scalar(select(Job).where(Job.job_code == "DEMO-ROS-26"))
+    assert job is not None
+    phase = job.phases[0]
+    phase.end_at = phase.start_at + timedelta(hours=8)
+    phase.tentmaster_id = None
+    session.commit()
+    JobService(session).add_local_crew_booking(
+        job.id,
+        {"headcount": 6, "start_at": phase.start_at, "end_at": phase.end_at, "notes": None},
+    )
+
+    assert CostingService(session).crew_work_cost(job.id) == Decimal("0.00")
 
 
 def test_load_estimate_manual_override_and_invoice_allocation(session: Session) -> None:

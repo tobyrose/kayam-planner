@@ -69,4 +69,78 @@
       <a class="btn btn-outline-secondary" href="/admin/{{ entity.slug }}">Cancel</a>
     </div>
   </form>
+
+  {% if entity.slug == "crew-members" and record_id %}
+    {% set back = "/admin/crew-members/" ~ record_id ~ "/edit" %}
+    <section class="mt-4">
+      <h2 class="h4">Availability</h2>
+      <p class="text-muted small">
+        Short unavailable/leave periods and longer season-contract windows for this crew member —
+        used when deriving who's actually available on a given date.
+      </p>
+
+      <h3 class="h6 mt-3">Unavailable / leave periods</h3>
+      <table class="table table-sm bg-white">
+        <thead><tr><th>From</th><th>To</th><th>Status</th><th>Notes</th><th></th></tr></thead>
+        <tbody>
+          {% for row in availability %}
+            <tr>
+              <td>{{ row.start_at }}</td><td>{{ row.end_at }}</td>
+              <td>{{ row.status.value|replace('_',' ')|title }}</td><td>{{ row.notes or '' }}</td>
+              <td class="text-end">
+                <a class="btn btn-sm btn-outline-secondary" href="/admin/crew-availability/{{ row.id }}/edit">Edit</a>
+                <form method="post" class="d-inline" action="/admin/crew-availability/{{ row.id }}/delete?redirect_to={{ back }}">
+                  <button class="btn btn-sm btn-outline-danger" type="submit">Delete</button>
+                </form>
+              </td>
+            </tr>
+          {% else %}
+            <tr><td colspan="5" class="text-muted">None recorded.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <form method="post" action="/admin/crew-availability/new" class="row g-2 align-items-end border rounded p-2 mb-4">
+        <input type="hidden" name="crew_member_id" value="{{ record_id }}">
+        <input type="hidden" name="redirect_to" value="{{ back }}">
+        <div class="col-auto"><label class="form-label small mb-0">From</label><input class="form-control form-control-sm" type="date" name="start_at" required></div>
+        <div class="col-auto"><label class="form-label small mb-0">To</label><input class="form-control form-control-sm" type="date" name="end_at" required></div>
+        <div class="col-auto">
+          <label class="form-label small mb-0">Status</label>
+          <select class="form-select form-select-sm" name="status" required>
+            {% for value, label in availability_statuses %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="col-auto"><label class="form-label small mb-0">Notes</label><input class="form-control form-control-sm" name="notes"></div>
+        <div class="col-auto"><button class="btn btn-sm btn-primary" type="submit">Add</button></div>
+      </form>
+
+      <h3 class="h6">Season availability windows</h3>
+      <table class="table table-sm bg-white">
+        <thead><tr><th>From</th><th>To</th><th>Notes</th><th></th></tr></thead>
+        <tbody>
+          {% for row in availability_windows %}
+            <tr>
+              <td>{{ row.start_at }}</td><td>{{ row.end_at or 'ongoing' }}</td><td>{{ row.notes or '' }}</td>
+              <td class="text-end">
+                <a class="btn btn-sm btn-outline-secondary" href="/admin/crew-availability-windows/{{ row.id }}/edit">Edit</a>
+                <form method="post" class="d-inline" action="/admin/crew-availability-windows/{{ row.id }}/delete?redirect_to={{ back }}">
+                  <button class="btn btn-sm btn-outline-danger" type="submit">Delete</button>
+                </form>
+              </td>
+            </tr>
+          {% else %}
+            <tr><td colspan="4" class="text-muted">None recorded — treated as always available.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <form method="post" action="/admin/crew-availability-windows/new" class="row g-2 align-items-end border rounded p-2">
+        <input type="hidden" name="crew_member_id" value="{{ record_id }}">
+        <input type="hidden" name="redirect_to" value="{{ back }}">
+        <div class="col-auto"><label class="form-label small mb-0">Available from</label><input class="form-control form-control-sm" type="date" name="start_at" required></div>
+        <div class="col-auto"><label class="form-label small mb-0">Available until</label><input class="form-control form-control-sm" type="date" name="end_at"></div>
+        <div class="col-auto"><label class="form-label small mb-0">Notes</label><input class="form-control form-control-sm" name="notes"></div>
+        <div class="col-auto"><button class="btn btn-sm btn-primary" type="submit">Add</button></div>
+      </form>
+    </section>
+  {% endif %}
 {% endblock %}

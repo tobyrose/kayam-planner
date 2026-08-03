@@ -1,0 +1,114 @@
+{% extends "base.html" %}
+{% block title %}Crew roster · Kayam Planner{% endblock %}
+{% block content %}
+  <div class="d-flex justify-content-between align-items-start mb-3">
+    <div>
+      <p class="text-uppercase text-secondary fw-semibold mb-1">Roster over time</p>
+      <h1 class="h2 mb-0">Crew roster</h1>
+      <p class="text-muted mb-0">
+        Who belongs to which Tentmaster, by date. Job phases automatically pick up whoever is
+        rostered here — move someone once and every phase their Tentmaster works updates. Drag a
+        name onto a Tentmaster's cell on the date the move takes effect, or drop it under
+        Unassigned to remove them from a team without assigning a new one. Cells tinted
+        <span class="roster-job-label" style="display:inline;">amber</span> show a Tentmaster is
+        booked on a job or activity that day, so you can see the season's shape while moving crew.
+        <span class="roster-chip-unavailable" style="display:inline-block; padding:0 .3rem;">Greyed</span>
+        names are still on that Tentmaster but marked unavailable that day, so they don't count
+        toward the crew total.
+      </p>
+    </div>
+  </div>
+  {% if errors %}<div class="alert alert-danger">{{ errors|join('; ') }}</div>{% endif %}
+  <form class="row g-2 mb-3 align-items-end">
+    <div class="col-auto">
+      <label class="form-label" for="roster-year">Year</label>
+      <select class="form-select" id="roster-year" name="year" onchange="this.form.submit()">
+        {% for y in range(current_year - 1, current_year + 4) %}
+          <option value="{{ y }}" {% if y == start_date.year %}selected{% endif %}>{{ y }}</option>
+        {% endfor %}
+      </select>
+    </div>
+  </form>
+  <form class="row g-2 mb-3">
+    <div class="col-auto">
+      <label class="visually-hidden" for="start">Start</label>
+      <input class="form-control" type="date" id="start" name="start" value="{{ start_date }}">
+    </div>
+    <div class="col-auto">
+      <select class="form-select" name="days">
+        <option value="31" {% if days_count == 31 %}selected{% endif %}>Month</option>
+        <option value="92" {% if days_count == 92 %}selected{% endif %}>Quarter</option>
+        <option value="366" {% if days_count == 366 %}selected{% endif %}>Season</option>
+      </select>
+    </div>
+    <div class="col-auto"><button class="btn btn-outline-primary">View</button></div>
+  </form>
+
+  <details class="mb-3">
+    <summary class="text-muted">Prefer a form? Move crew member without dragging</summary>
+    <form method="post" action="/planning/roster/move" class="row g-2 align-items-end border rounded p-3 mt-2 bg-white">
+      <input type="hidden" name="board_start" value="{{ start_date }}">
+      <div class="col-md-3">
+        <label class="form-label" for="crew_member_id">Crew member</label>
+        <select class="form-select" id="crew_member_id" name="crew_member_id" required>
+          {% for team in board.tentmasters %}
+            {% for entry in board.days[0].members_by_tentmaster.get(team.id, []) %}
+              <option value="{{ entry.member.id }}">{{ entry.member.name }} — currently {{ team.name }}</option>
+            {% endfor %}
+          {% endfor %}
+          {% for member in board.days[0].unassigned %}
+            <option value="{{ member.id }}">{{ member.name }} — currently unassigned</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label" for="to_tentmaster_id">Move to</label>
+        <select class="form-select" id="to_tentmaster_id" name="to_tentmaster_id" required>
+          {% for team in board.tentmasters %}
+            <option value="{{ team.id }}">{{ team.name }}</option>
+          {% endfor %}
+          <option value="">Unassigned</option>
+        </select>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label" for="effective_date">Effective date</label>
+        <input class="form-control" type="date" id="effective_date" name="effective_date" value="{{ start_date }}" required>
+      </div>
+      <div class="col-md-3"><button class="btn btn-primary" type="submit">Move crew member</button></div>
+    </form>
+  </details>
+
+  <div class="planning-board-wrap">
+    <table class="planning-board roster-board" data-board-start="{{ start_date }}">
+      <thead>
+        <tr>
+          <th class="sticky-date">Date</th>
+          {% for team in board.tentmasters %}<th>{{ team.name }}</th>{% endfor %}
+          <th>Unassigned</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for day in board.days %}
+          <tr>
+            <th class="sticky-date" scope="row">{{ day.date.strftime('%a %d %b') }}</th>
+            {% for team in board.tentmasters %}
+              {% set job_label = day.shading_by_tentmaster.get(team.id, "") %}
+              <td class="roster-drop-cell{% if job_label %} has-job{% endif %}" data-tentmaster-id="{{ team.id }}" data-date="{{ day.date.isoformat() }}">
+                {% if job_label %}<span class="roster-job-label" title="Booked: {{ job_label }}">{{ job_label }}</span>{% endif %}
+                {% for entry in day.members_by_tentmaster.get(team.id, []) %}
+                  <span class="board-block roster-chip{% if entry.available %} status-confirmed{% else %} roster-chip-unavailable{% endif %}" draggable="true" data-crew-member-id="{{ entry.member.id }}" {% if not entry.available %}title="Unavailable this day — not counted"{% endif %}>{{ entry.member.name }}</span>
+                {% endfor %}
+              </td>
+            {% endfor %}
+            <td class="roster-drop-cell" data-tentmaster-id="" data-date="{{ day.date.isoformat() }}">
+              {% for member in day.unassigned %}
+                <span class="board-block status-quoted roster-chip" draggable="true" data-crew-member-id="{{ member.id }}">{{ member.name }}</span>
+              {% endfor %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <script src="{{ url_for('static', path='/js/roster-board.js') }}" defer></script>
+{% endblock %}

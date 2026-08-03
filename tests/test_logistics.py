@@ -57,7 +57,7 @@ def create_load(
 def test_load_capacity_within_and_over_limit(session: Session) -> None:
     service, origin, destination, lorry_type = seeded_logistics(session)
     load = create_load(service, origin, destination, lorry_type)
-    equipment_type = session.scalar(select(EquipmentType).where(EquipmentType.code == "POLE"))
+    equipment_type = session.scalar(select(EquipmentType).where(EquipmentType.code == "P"))
     assert equipment_type is not None
     equipment_type.pole_capacity_units = 1
     lorry_type.pole_capacity_units = 100
@@ -108,7 +108,7 @@ def test_transition_requirements_are_generated_without_committing_loads(session:
     ).all()
     assert asset is not None and len(jobs) == 2
     requirements = [
-        next(item for item in job.equipment_requirements if item.equipment_type.code == "END")
+        next(item for item in job.equipment_requirements if item.equipment_type.code == "K")
         for job in jobs
     ]
     planning = EquipmentPlanningService(session)

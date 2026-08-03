@@ -5,13 +5,13 @@ from datetime import timedelta
 from decimal import Decimal
 
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.models.costing import LoadCostAllocation, SupplierInvoice
 from app.models.crew_movements import CrewMovement, CrewMovementPassenger
-from app.models.crew_planning import CrewAssignment
 from app.models.jobs import Job, JobPhase
 from app.models.logistics import EstimateSource, Load
+from app.services.roster import RosterIndex, phase_roster
 
 
 @dataclass(frozen=True)
@@ -34,16 +34,24 @@ class CostingService:
         self.session = session
 
     def crew_work_cost(self, job_id: int) -> Decimal:
-        assignments = self.session.scalars(
-            select(CrewAssignment)
-            .join(CrewAssignment.job_phase)
-            .where(JobPhase.job_id == job_id, CrewAssignment.crew_member_id.is_not(None))
+        phases = self.session.scalars(
+            select(JobPhase)
+            .where(JobPhase.job_id == job_id)
+            .options(selectinload(JobPhase.job).selectinload(Job.local_crew_bookings))
+        ).all()
+        if not phases:
+            return Decimal("0.00")
+        index = RosterIndex.build(
+            self.session,
+            min(phase.start_at for phase in phases),
+            max(phase.end_at for phase in phases),
         )
         total = Decimal(0)
-        for assignment in assignments:
-            assert assignment.crew_member is not None
-            hours = Decimal(str((assignment.end_at - assignment.start_at) / timedelta(hours=1)))
-            total += hours * assignment.crew_member.hourly_cost
+        for phase in phases:
+            hours = Decimal(str((phase.end_at - phase.start_at) / timedelta(hours=1)))
+            roster = phase_roster(phase, index)
+            for member in roster.members:
+                total += hours * member.hourly_cost
         return total.quantize(Decimal("0.01"))
 
     def crew_travel_cost(self, job: Job) -> Decimal:

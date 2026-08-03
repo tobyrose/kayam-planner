@@ -1,27 +1,31 @@
 from __future__ import annotations
 
-from datetime import timedelta
-from decimal import Decimal
+from datetime import datetime, timedelta
 from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.models.administration import BuildStage, TentConfiguration
+from app.models.administration import BuildStage, EquipmentType
 from app.models.jobs import (
     CommercialStatus,
     Job,
     JobEquipmentRequirement,
     JobPhase,
     JobTentRequirement,
+    JobTentSection,
+    LocalCrewBooking,
     PhaseType,
     PlanningStatus,
     RecordSource,
     RequirementSource,
     RequirementStatus,
 )
-from app.schemas.jobs import JobData, JobPhaseData, JobTentRequirementData
+from app.schemas.jobs import JobData, JobPhaseData, JobTentRequirementData, LocalCrewBookingData
+
+BUILD_LEAD_DAYS = 5
+BREAK_TRAIL_DAYS = 3
 
 
 class JobError(Exception):
@@ -110,8 +114,6 @@ class JobService:
         job = Job(**values)
         self.session.add(job)
         try:
-            self.session.flush()
-            self.generate_phases(job)
             self.session.commit()
             self.session.refresh(job)
         except IntegrityError as error:
@@ -128,9 +130,6 @@ class JobService:
         for name, value in values.items():
             setattr(job, name, value)
         try:
-            self.session.flush()
-            self.generate_phases(job)
-            self.regenerate_requirements(job)
             self.session.commit()
             self.session.refresh(job)
         except IntegrityError as error:
@@ -141,11 +140,38 @@ class JobService:
     def add_tent_requirement(self, job_id: int, payload: dict[str, Any]) -> JobTentRequirement:
         job = self.get_job(job_id)
         values = JobTentRequirementData.model_validate(payload).model_dump()
+        codes = [token.strip() for token in values.pop("sequence").split("-") if token.strip()]
+        if not codes:
+            raise JobError("Enter at least one section code, e.g. K-M-M-M-K")
+        equipment_types = {
+            equipment_type.code: equipment_type
+            for equipment_type in self.session.scalars(
+                select(EquipmentType).where(EquipmentType.code.in_(codes))
+            )
+        }
+        unknown = [code for code in codes if code not in equipment_types]
+        if unknown:
+            raise JobError(f"Unknown section code(s): {', '.join(unknown)}")
+        non_section = [code for code in codes if equipment_types[code].category != "section"]
+        if non_section:
+            raise JobError(
+                f"Not a bookable section type: {', '.join(non_section)} "
+                "(poles and linked equipment are derived automatically)"
+            )
+        families = {equipment_types[code].tent_family_id for code in codes}
+        if len(families) > 1:
+            raise JobError("All sections in one tent must belong to the same tent family")
+
+        other_tents = list(job.tent_requirements)
         requirement = JobTentRequirement(**values)
         job.tent_requirements.append(requirement)
+        for index, code in enumerate(codes):
+            requirement.sections.append(
+                JobTentSection(sequence_index=index, equipment_type_id=equipment_types[code].id)
+            )
         self.session.flush()
         self.regenerate_requirements(job)
-        self.generate_phases(job)
+        self._seed_phases_for_new_tent(job, requirement, other_tents)
         self.session.commit()
         self.session.refresh(requirement)
         return requirement
@@ -158,8 +184,91 @@ class JobService:
         job.tent_requirements.remove(requirement)
         self.session.flush()
         self.regenerate_requirements(job)
-        self.generate_phases(job)
         self.session.commit()
+
+    def add_phase(self, job_id: int, payload: dict[str, Any]) -> JobPhase:
+        """Add a phase beyond the auto-seeded set — e.g. a second Up phase to split a tent's
+        contract window between two Tentmasters mid-contract (overlap allowed for handover)."""
+        job = self.get_job(job_id)
+        values = JobPhaseData.model_validate(payload).model_dump()
+        self._validate_up_within_contract(values)
+        phase = JobPhase(job_id=job.id, source=RecordSource.MANUAL, **values)
+        self.session.add(phase)
+        try:
+            self.session.commit()
+        except IntegrityError as error:
+            self.session.rollback()
+            raise JobConflictError("Phase conflicts with existing data") from error
+        self.session.refresh(phase)
+        return phase
+
+    def delete_phase(self, job_id: int, phase_id: int) -> None:
+        self.get_job(job_id)
+        phase = self.session.get(JobPhase, phase_id)
+        if phase is None or phase.job_id != job_id:
+            raise JobNotFoundError("Job phase not found")
+        if phase.locked:
+            raise JobConflictError("Phase is locked and cannot be removed")
+        self.session.delete(phase)
+        self.session.commit()
+
+    def add_local_crew_booking(self, job_id: int, payload: dict[str, Any]) -> LocalCrewBooking:
+        """Book anonymous local/hired headcount onto the job between two dates — joins whichever
+        phase(s) are active over that window (see `roster.phase_roster`), not a specific phase."""
+        job = self.get_job(job_id)
+        values = LocalCrewBookingData.model_validate(payload).model_dump()
+        booking = LocalCrewBooking(job_id=job.id, **values)
+        self.session.add(booking)
+        self.session.commit()
+        self.session.refresh(booking)
+        return booking
+
+    def delete_local_crew_booking(self, job_id: int, booking_id: int) -> None:
+        self.get_job(job_id)
+        booking = self.session.get(LocalCrewBooking, booking_id)
+        if booking is None or booking.job_id != job_id:
+            raise JobNotFoundError("Local crew booking not found")
+        self.session.delete(booking)
+        self.session.commit()
+
+    def add_ancillary_equipment(
+        self, job_id: int, equipment_type_id: int, quantity: int
+    ) -> JobEquipmentRequirement:
+        """Manually book a non-section tracked item onto the job (stake basher, crew tent, ...)
+        with no stage picker — a sensible default stage is chosen internally. Booking the same
+        type again tops up the existing manual line rather than creating a duplicate."""
+        job = self.get_job(job_id)
+        if quantity <= 0:
+            raise JobError("Quantity must be positive")
+        window_start, window_end = self._requirement_window(job)
+        existing = next(
+            (
+                requirement
+                for requirement in job.equipment_requirements
+                if requirement.equipment_type_id == equipment_type_id
+                and requirement.source == RequirementSource.MANUAL
+                and requirement.required_stage == BuildStage.COMPLETION_AND_ANCILLARY
+            ),
+            None,
+        )
+        if existing is not None:
+            existing.quantity_required += quantity
+            self.session.commit()
+            self.session.refresh(existing)
+            return existing
+        requirement = JobEquipmentRequirement(
+            job_id=job.id,
+            equipment_type_id=equipment_type_id,
+            quantity_required=quantity,
+            required_on_site_at=window_start,
+            releasable_at=window_end,
+            required_stage=BuildStage.COMPLETION_AND_ANCILLARY,
+            source=RequirementSource.MANUAL,
+        )
+        self.session.add(requirement)
+        self.session.commit()
+        self.session.refresh(requirement)
+        return requirement
 
     def update_phase(self, job_id: int, phase_id: int, payload: dict[str, Any]) -> JobPhase:
         self.get_job(job_id)
@@ -167,8 +276,38 @@ class JobService:
         if phase is None or phase.job_id != job_id:
             raise JobNotFoundError("Job phase not found")
         values = JobPhaseData.model_validate(payload).model_dump()
+        self._validate_up_within_contract(values)
         for name, value in values.items():
             setattr(phase, name, value)
+        self.session.commit()
+        self.session.refresh(phase)
+        return phase
+
+    def _validate_up_within_contract(self, values: dict[str, Any]) -> None:
+        """An Up phase can be freely split across Tentmasters (a handover overlap day is fine),
+        but must never extend outside its tent's fixed contract window."""
+        if values["phase_type"] != PhaseType.UP:
+            return
+        tent = self.session.get(JobTentRequirement, values["job_tent_requirement_id"])
+        if tent is None:
+            raise JobError("Tent requirement not found")
+        if values["start_at"] < tent.contracted_up_at or values["end_at"] > tent.contracted_down_at:
+            raise JobError(
+                "Up phase must stay within the tent's contract window "
+                f"({tent.contracted_up_at:%d %b %H:%M} – {tent.contracted_down_at:%d %b %H:%M})"
+            )
+
+    def reassign_phase_tentmaster(self, phase_id: int, tentmaster_id: int | None) -> JobPhase:
+        """Move a phase to a different Tentmaster (or unassign it) without touching anything
+        else — used by the season board's drag-and-drop, as distinct from `update_phase()`'s
+        full-form edit. Double-booking is reported on the conflicts page, not blocked here,
+        matching the rest of the app's "planner controls, system flags" approach (D013)."""
+        phase = self.session.get(JobPhase, phase_id)
+        if phase is None:
+            raise JobNotFoundError("Job phase not found")
+        if phase.locked:
+            raise JobConflictError("Phase is locked and cannot be reassigned")
+        phase.tentmaster_id = tentmaster_id
         self.session.commit()
         self.session.refresh(phase)
         return phase
@@ -176,14 +315,7 @@ class JobService:
     def regenerate_requirements(self, job: Job) -> list[JobEquipmentRequirement]:
         totals: dict[tuple[int, BuildStage], int] = {}
         for tent_requirement in job.tent_requirements:
-            configuration = self.session.get(
-                TentConfiguration, tent_requirement.tent_configuration_id
-            )
-            if configuration is None:
-                continue
-            for component in configuration.requirements:
-                key = (component.equipment_type_id, component.required_stage)
-                totals[key] = totals.get(key, 0) + component.quantity * tent_requirement.quantity
+            self._expand_tent_requirement(tent_requirement, totals)
 
         generated = {
             (requirement.equipment_type_id, requirement.required_stage): requirement
@@ -204,71 +336,149 @@ class JobService:
                     source=RequirementSource.GENERATED,
                 )
                 job.equipment_requirements.append(current_requirement)
+            window_start, window_end = self._requirement_window(job)
             current_requirement.quantity_required = quantity
-            current_requirement.required_on_site_at = job.site_access_at
-            current_requirement.releasable_at = job.strike_available_at
+            current_requirement.required_on_site_at = window_start
+            current_requirement.releasable_at = window_end
             current_requirement.status = RequirementStatus.UNRESOLVED
             results.append(current_requirement)
         self.session.flush()
         return results
 
-    def generate_phases(self, job: Job) -> list[JobPhase]:
-        generated = {
-            phase.phase_type: phase
-            for phase in job.phases
-            if phase.source == RecordSource.GENERATED and not phase.locked
-        }
-        desired: dict[PhaseType, tuple[Any, Any, int]] = {
-            PhaseType.BUILD: (job.site_access_at, job.must_be_up_at, self._preferred_crew(job)),
-        }
-        if job.show_start_at and job.show_end_at:
-            desired[PhaseType.SHOW] = (job.show_start_at, job.show_end_at, 0)
-            if job.maintenance_cover_required:
-                desired[PhaseType.MAINTENANCE] = (job.show_start_at, job.show_end_at, 1)
-        strike_end = job.site_clear_by or (
-            job.strike_available_at + timedelta(hours=float(self._strike_hours(job)))
+    def _requirement_window(self, job: Job) -> tuple[datetime, datetime]:
+        """The outer bound equipment must be on site for: from the earliest tent's Build start to
+        the latest tent's Break end, across every tent on the job."""
+        if not job.tent_requirements:
+            raise JobError("Add a tent requirement first")
+        starts = [
+            requirement.contracted_up_at - timedelta(days=BUILD_LEAD_DAYS)
+            for requirement in job.tent_requirements
+        ]
+        ends = [
+            requirement.contracted_down_at + timedelta(days=BREAK_TRAIL_DAYS)
+            for requirement in job.tent_requirements
+        ]
+        return min(starts), max(ends)
+
+    def _expand_tent_requirement(
+        self, tent_requirement: JobTentRequirement, totals: dict[tuple[int, BuildStage], int]
+    ) -> None:
+        """Add one tent requirement's sections, derived poles, and cascaded linked equipment
+        into `totals`. Sections contribute one unit each per booked tent; poles are computed from
+        the section count via the sequence's `TentFamily` formula; each of those, in turn,
+        cascades through any `EquipmentLink` rows (recursively, cycle-guarded).
+        """
+
+        sections = tent_requirement.sections
+        if not sections:
+            return
+        quantity = tent_requirement.quantity
+        for section in sections:
+            equipment_type = section.equipment_type
+            self._add_equipment(equipment_type, quantity, totals)
+            self._expand_links(equipment_type, quantity, totals, visited={equipment_type.id})
+
+        family = tent_requirement.tent_family
+        if family is None or family.pole_equipment_type_id is None:
+            return
+        pole_type = family.pole_equipment_type
+        assert pole_type is not None
+        total_poles = max(
+            0, len(sections) * family.pole_count_multiplier + family.pole_count_offset
         )
-        desired[PhaseType.STRIKE] = (
-            job.strike_available_at,
-            strike_end,
-            self._preferred_crew(job),
+        pole_asset_quantity = -(-total_poles // pole_type.pack_size)  # ceil division
+        if pole_asset_quantity <= 0:
+            return
+        pole_quantity = pole_asset_quantity * quantity
+        self._add_equipment(pole_type, pole_quantity, totals)
+        self._expand_links(pole_type, pole_quantity, totals, visited={pole_type.id})
+
+    def _expand_links(
+        self,
+        equipment_type: EquipmentType,
+        parent_quantity: int,
+        totals: dict[tuple[int, BuildStage], int],
+        *,
+        visited: set[int],
+    ) -> None:
+        for link in equipment_type.outgoing_links:
+            if link.child_equipment_type_id in visited:
+                continue  # defensive cycle guard; EquipmentLink also rejects direct self-links
+            child_type = link.child_equipment_type
+            child_quantity = parent_quantity * link.quantity_per_parent
+            self._add_equipment(child_type, child_quantity, totals)
+            self._expand_links(
+                child_type, child_quantity, totals, visited=visited | {child_type.id}
+            )
+
+    @staticmethod
+    def _add_equipment(
+        equipment_type: EquipmentType,
+        quantity: int,
+        totals: dict[tuple[int, BuildStage], int],
+    ) -> None:
+        key = (equipment_type.id, equipment_type.default_build_stage)
+        totals[key] = totals.get(key, 0) + quantity
+
+    def _seed_phases_for_new_tent(
+        self,
+        job: Job,
+        requirement: JobTentRequirement,
+        other_tents: list[JobTentRequirement],
+    ) -> None:
+        """Seed a starting set of phases when a tent is added — a one-time seed, not a
+        continuously re-synced desired state (the planner freely edits/adds/removes phases
+        afterward via `add_phase()`/`update_phase()`/`delete_phase()`).
+
+        Always seeds this tent's own Up phase. If it's the job's first tent, also seeds the
+        job-level Build (contract Up minus `BUILD_LEAD_DAYS`) and Break (contract Down plus
+        `BREAK_TRAIL_DAYS`) — the same crew typically builds/strikes every tent together. If a
+        later tent's Up is after an already-seeded tent's Up, an extra Build segment is seeded
+        between the two, since that gap is genuinely more build work, not idle time.
+        """
+        preferred_crew = requirement.tent_family.preferred_crew if requirement.tent_family else 0
+        job.phases.append(
+            JobPhase(
+                phase_type=PhaseType.UP,
+                job_tent_requirement_id=requirement.id,
+                start_at=requirement.contracted_up_at,
+                end_at=requirement.contracted_down_at,
+                required_headcount=preferred_crew,
+                source=RecordSource.GENERATED,
+            )
         )
-        for phase_type, generated_phase in list(generated.items()):
-            if phase_type not in desired:
-                self.session.delete(generated_phase)
-        result: list[JobPhase] = []
-        for phase_type, (start_at, end_at, headcount) in desired.items():
-            current_phase = generated.get(phase_type)
-            if current_phase is None:
-                current_phase = JobPhase(
-                    phase_type=phase_type,
+        if not other_tents:
+            job.phases.append(
+                JobPhase(
+                    phase_type=PhaseType.BUILD,
+                    start_at=requirement.contracted_up_at - timedelta(days=BUILD_LEAD_DAYS),
+                    end_at=requirement.contracted_up_at,
+                    required_headcount=preferred_crew,
                     source=RecordSource.GENERATED,
                 )
-                job.phases.append(current_phase)
-            current_phase.start_at = start_at
-            current_phase.end_at = end_at
-            current_phase.required_headcount = headcount
-            result.append(current_phase)
+            )
+            job.phases.append(
+                JobPhase(
+                    phase_type=PhaseType.BREAK,
+                    start_at=requirement.contracted_down_at,
+                    end_at=requirement.contracted_down_at + timedelta(days=BREAK_TRAIL_DAYS),
+                    required_headcount=preferred_crew,
+                    source=RecordSource.GENERATED,
+                )
+            )
+        else:
+            earliest_up = min(tent.contracted_up_at for tent in other_tents)
+            if requirement.contracted_up_at > earliest_up:
+                job.phases.append(
+                    JobPhase(
+                        phase_type=PhaseType.BUILD,
+                        start_at=earliest_up,
+                        end_at=requirement.contracted_up_at,
+                        required_headcount=preferred_crew,
+                        source=RecordSource.GENERATED,
+                    )
+                )
         self.session.flush()
-        return result
-
-    def _preferred_crew(self, job: Job) -> int:
-        values = [
-            requirement.required_crew_override
-            if requirement.required_crew_override is not None
-            else requirement.tent_configuration.preferred_crew
-            for requirement in job.tent_requirements
-        ]
-        return max(values, default=0)
-
-    def _strike_hours(self, job: Job) -> Decimal:
-        values = [
-            requirement.strike_duration_override_hours
-            if requirement.strike_duration_override_hours is not None
-            else requirement.tent_configuration.default_strike_hours
-            for requirement in job.tent_requirements
-        ]
-        return max(values, default=Decimal("1")) or Decimal("1")
 
     @staticmethod
     def _validate_status_transition(job: Job, values: dict[str, Any]) -> None:

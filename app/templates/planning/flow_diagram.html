@@ -1,0 +1,28 @@
+{% extends "base.html" %}{% block title %}Flow diagram · Kayam Planner{% endblock %}{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-end gap-3 mb-3"><div><p class="text-uppercase text-muted small mb-1">Equipment on the move</p><h1>Loads &amp; equipment flow diagram</h1><p class="text-muted mb-0">Locations run across the top, dates run down the side, like the loading sheet — lines show a load's journey between locations on the date it travels.</p></div><div class="d-flex flex-wrap gap-3 align-items-end"><form class="row g-2 align-items-end"><div class="col-auto"><label class="form-label" for="flow-year">Year</label><select class="form-select" id="flow-year" name="year" onchange="this.form.submit()">{% for y in range(current_year - 1, current_year + 4) %}<option value="{{ y }}" {% if y == flow.start.year %}selected{% endif %}>{{ y }}</option>{% endfor %}</select></div></form><form class="row g-2 align-items-end"><div class="col-auto"><label class="form-label">From</label><input class="form-control" type="date" name="start" value="{{ flow.start }}"></div><div class="col-auto"><label class="form-label">To</label><input class="form-control" type="date" name="end" value="{{ flow.end }}"></div><div class="col-auto"><button class="btn btn-primary">Load range</button></div></form></div></div>
+<div class="board-toolbar planning-section d-flex flex-wrap gap-2 align-items-center"><label for="board-filter" class="visually-hidden">Filter board</label><input id="board-filter" class="form-control form-control-sm" placeholder="Filter job or location"><button class="btn btn-sm btn-outline-secondary board-zoom" data-zoom="compact">Compact</button><button class="btn btn-sm btn-outline-secondary board-zoom" data-zoom="comfortable">Comfortable</button><span class="ms-auto small"><span class="legend confirmed"></span> confirmed <span class="legend provisional"></span> provisional</span></div>
+{% if not flow.nodes %}
+<p class="text-muted">No jobs or loads scheduled in this date range.</p>
+{% else %}
+<div class="season-board-wrap flow-board-wrap" tabindex="0" aria-label="Loads and equipment flow diagram">
+  <div class="flow-board-inner" style="position:relative; width:{{ flow.width }}px; height:{{ flow.height + 34 }}px;">
+    <table class="season-board flow-board" id="season-board" style="table-layout:fixed; width:{{ flow.width }}px;">
+      <colgroup><col style="width:{{ flow.label_width }}px;">{% for node in flow.nodes %}<col style="width:{{ flow.lane_width }}px;">{% endfor %}</colgroup>
+      <thead><tr><th class="sticky-date">Date</th>{% for node in flow.nodes %}<th>{{ node.name }}</th>{% endfor %}</tr></thead>
+      <tbody>
+        {% for day in flow.days %}
+        <tr style="height:{{ flow.row_height }}px;">
+          <th class="sticky-date" style="height:{{ flow.row_height }}px;"><time datetime="{{ day.day }}">{{ day.day.strftime('%a') }}<strong>{{ day.day.strftime('%d %b') }}</strong></time></th>
+          {% for node in flow.nodes %}<td class="lane-cell" style="height:{{ flow.row_height }}px; overflow:hidden;">{% for block in day.cells.get(node.location_id, []) %}<a class="season-block seg-{{ block.segment }} job status-{{ block.status }}" href="{{ block.href }}" data-search="{{ block.label }} {{ block.subtitle }}" data-job="{{ block.job_id }}"><strong>{{ block.label }}</strong><small>{{ block.subtitle }}</small></a>{% endfor %}</td>{% endfor %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <svg class="flow-edges" id="flow-edges" style="top:34px; left:0; width:{{ flow.width }}px; height:{{ flow.height }}px;" viewBox="0 0 {{ flow.width }} {{ flow.height }}">
+      <defs><marker id="flow-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#5b615b"></path></marker></defs>
+      {% for edge in flow.edges %}<a class="flow-edge status-{{ edge.status }}" href="{{ edge.href }}" data-label="{{ edge.label }}" data-subtitle="{{ edge.subtitle }}"><line x1="{{ edge.x1 }}" y1="{{ edge.y1 }}" x2="{{ edge.x2 }}" y2="{{ edge.y2 }}" marker-end="url(#flow-arrow)"></line><circle class="flow-node-dot" cx="{{ edge.x1 }}" cy="{{ edge.y1 }}" r="3"></circle><circle class="flow-node-dot" cx="{{ edge.x2 }}" cy="{{ edge.y2 }}" r="3"></circle><title>{{ edge.label }} — {{ edge.subtitle }}</title></a>{% endfor %}
+    </svg>
+  </div>
+</div>
+{% endif %}
+<aside id="board-panel" class="board-panel" hidden aria-live="polite"><div class="board-panel-header"><h2 class="h5 mb-0">Selection</h2><button class="btn-close" aria-label="Close"></button></div><div class="panel-copy"></div></aside><script src="{{ url_for('static', path='/js/board.js') }}" defer></script><script src="{{ url_for('static', path='/js/flow.js') }}" defer></script>{% endblock %}

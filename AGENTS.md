@@ -10,6 +10,8 @@ Before making architectural or business-rule changes, read:
 2. `DECISIONS.md`
 3. `OPEN_QUESTIONS.md`
 4. `IMPLEMENTATION_PLAN.md`
+5. `LOAD_ENGINE_DESIGN.md` — active design conversation (not yet implemented) for the automatic
+   load-design/routing engine and the Loads Diagram; read this before touching either topic.
 
 Treat `SPECIFICATION.md` as the primary product source of truth.
 

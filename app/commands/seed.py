@@ -15,8 +15,11 @@ from app.config import get_settings
 from app.database import SessionLocal
 from app.models.administration import (
     BuildStage,
+    CrewEmploymentType,
     CrewMember,
+    CrewRole,
     EquipmentAsset,
+    EquipmentLink,
     EquipmentType,
     Haulier,
     Location,
@@ -24,8 +27,6 @@ from app.models.administration import (
     Lorry,
     LorryType,
     OwnershipType,
-    TentConfiguration,
-    TentConfigurationRequirement,
     TentFamily,
     Tentmaster,
     TentmasterMembership,
@@ -39,12 +40,10 @@ from app.models.crew_movements import (
     CrewMovementPassenger,
     JourneyMode,
 )
-from app.models.crew_planning import CrewAssignment
 from app.models.equipment_planning import AllocationStrength, EquipmentAssignment
 from app.models.jobs import (
     CommercialStatus,
     Job,
-    JobTentRequirement,
     PhaseType,
     PlanningStatus,
     RecordSource,
@@ -69,6 +68,152 @@ def get_or_create(
     session.add(record)
     session.flush()
     return record, True
+
+
+# Real per-section linked-parts quantities, transcribed verbatim from the owner-supplied
+# reference/kay.parts.csv stock sheet (2026-08-03) — one row per part, one column per Kayam-family
+# section code (K, m, M, T, SC, s, P, X). Blank/zero cells in the source mean "not applicable" and
+# are simply omitted here. `SIDE_POLE`/`BALE_RING` reuse the pre-existing placeholder codes from
+# `equipment_definitions` above (their names/categories are untouched by `get_or_create` once they
+# already exist) since the CSV's "Sidepole"/"Balerings" rows are unambiguously the same items —
+# `Balerings` even confirms the M=2 ratio already configured. Every other row is a genuinely new
+# linked-equipment type. `default_build_stage` groups pole/rigging hardware under
+# `POLES_AND_ANCHORS` and section-cladding hardware under `MAIN_SECTIONS`, mirroring the
+# convention already used for `SIDE_POLE`/`SIDE_GUY`/`BALE_RING`/`ANCHOR_STILLAGE` — inferred from
+# what each part actually is, not stated in the CSV itself.
+LINKED_PARTS_MATRIX: tuple[tuple[str, str, BuildStage, dict[str, int]], ...] = (
+    (
+        "STANDARD_GUYS",
+        "Standard Guys",
+        BuildStage.POLES_AND_ANCHORS,
+        {"K": 1, "m": 1, "M": 1, "T": 1, "s": 1, "P": 3, "X": 3},
+    ),
+    (
+        "TIFOR_1_6T",
+        "1.6 Ton Tirfor",
+        BuildStage.POLES_AND_ANCHORS,
+        {"K": 1, "m": 1, "M": 1, "T": 1, "s": 1, "P": 3, "X": 3},
+    ),
+    (
+        "TIFOR_3_2T",
+        "3.2 Ton Tirfor",
+        BuildStage.POLES_AND_ANCHORS,
+        {"K": 1, "m": 1, "M": 1, "T": 1, "s": 1, "P": 3, "X": 3},
+    ),
+    (
+        "POLE_LIFT_CABLE_66M",
+        "66M Pole lift Cable",
+        BuildStage.POLES_AND_ANCHORS,
+        {"K": 1, "m": 1, "M": 1, "T": 1, "s": 1, "P": 3, "X": 3},
+    ),
+    (
+        "BALERING_CABLE_18M",
+        "18M Balering Cable",
+        BuildStage.POLES_AND_ANCHORS,
+        {"K": 1, "m": 1, "M": 1, "T": 1, "s": 1, "P": 3, "X": 3},
+    ),
+    (
+        "STRETCHER_12_1M_WHITE",
+        "12.1M Stretcher (white)",
+        BuildStage.POLES_AND_ANCHORS,
+        {"K": 2, "m": 2, "M": 2, "T": 4, "SC": 2, "s": 2, "P": 2, "X": 2},
+    ),
+    ("GUY_EXTN_BLUE", "Guy extns (Blue)", BuildStage.POLES_AND_ANCHORS, {"K": 2}),
+    ("BALERING_CABLE_RED", "Balering cables (Red)", BuildStage.POLES_AND_ANCHORS, {"P": 4, "X": 4}),
+    ("BALERING_CABLE_EXTN_1M", "Balering cable extns 1M", BuildStage.POLES_AND_ANCHORS, {"X": 4}),
+    (
+        "RADIAL_GUY",
+        "Radial Guys (Black rope or red sleeve)",
+        BuildStage.POLES_AND_ANCHORS,
+        {"T": 6},
+    ),
+    (
+        "STRETCHER_14_75M_GREEN",
+        "14.75M Stretchers (Green)",
+        BuildStage.POLES_AND_ANCHORS,
+        {"P": 1, "X": 1},
+    ),
+    (
+        "WALL_PANEL_M",
+        "Walls (M)",
+        BuildStage.MAIN_SECTIONS,
+        {"K": 75, "m": 30, "M": 40, "s": 55},
+    ),
+    (
+        "STAKE",
+        "Stakes",
+        BuildStage.MAIN_SECTIONS,
+        {"K": 60, "m": 25, "M": 30, "T": 25, "SC": 20, "s": 40},
+    ),
+    (
+        "SIDE_POLE",
+        "Side Pole",
+        BuildStage.MAIN_SECTIONS,
+        {"K": 30, "m": 12, "M": 16, "T": 3, "SC": 1, "s": 18},
+    ),
+    (
+        "RATCHET",
+        "Ratchets",
+        BuildStage.MAIN_SECTIONS,
+        {"K": 50, "m": 20, "M": 25, "T": 20, "SC": 10, "s": 35},
+    ),
+    (
+        "BALE_RING",
+        "Bale Ring",
+        BuildStage.MAIN_SECTIONS,
+        {"K": 1, "m": 2, "M": 2, "T": 3, "SC": 1, "s": 1},
+    ),
+    (
+        "CAP",
+        "Caps",
+        BuildStage.MAIN_SECTIONS,
+        {"K": 1, "m": 2, "M": 2, "T": 3, "SC": 1, "s": 1, "X": 2},
+    ),
+    ("X_BASE_PLATE", "X Base Plates", BuildStage.POLES_AND_ANCHORS, {"X": 2}),
+    ("X_HINGE", "X Hinges", BuildStage.POLES_AND_ANCHORS, {"X": 2}),
+    ("P_BASE_PLATE", "P Base Plate", BuildStage.POLES_AND_ANCHORS, {"P": 2}),
+    ("P_HINGE", "P Hinges", BuildStage.POLES_AND_ANCHORS, {"P": 2}),
+    ("BASEPLATE_STAKE", "Baseplate Stakes", BuildStage.POLES_AND_ANCHORS, {"P": 8, "X": 8}),
+    ("FLAG_AND_POLE", "Flag & Pole", BuildStage.COMPLETION_AND_ANCILLARY, {"P": 2, "X": 2}),
+    ("SC_RIGGING_BOX", "Stage Cover Rigging box", BuildStage.COMPLETION_AND_ANCILLARY, {"SC": 1}),
+)
+
+
+def _ensure_linked_parts(session: Session, equipment_types: dict[str, EquipmentType]) -> int:
+    created = 0
+    kayam_family_id = equipment_types["K"].tent_family_id
+    for code, name, stage, quantities in LINKED_PARTS_MATRIX:
+        part_type, was_created = get_or_create(
+            session,
+            EquipmentType,
+            {"code": code},
+            {
+                "name": name,
+                "category": "linked",
+                "tent_family_id": kayam_family_id,
+                "tracking_mode": TrackingMode.QUANTITY,
+                "pack_size": 1,
+                "default_build_stage": stage,
+                "notes": "Source: reference/kay.parts.csv (owner-supplied, 2026-08-03).",
+            },
+        )
+        equipment_types.setdefault(code, part_type)
+        created += was_created
+        for parent_code, quantity_per_parent in quantities.items():
+            _, link_created = get_or_create(
+                session,
+                EquipmentLink,
+                {
+                    "parent_equipment_type_id": equipment_types[parent_code].id,
+                    "child_equipment_type_id": part_type.id,
+                },
+                {
+                    "quantity_per_parent": quantity_per_parent,
+                    "notes": "Source: reference/kay.parts.csv (owner-supplied, 2026-08-03).",
+                },
+            )
+            created += link_created
+    return created
 
 
 def seed_development_data(session: Session, *, include_operational_demo: bool = False) -> int:
@@ -96,28 +241,193 @@ def seed_development_data(session: Session, *, include_operational_demo: bool = 
         {"description": "DEMONSTRATION DATA — example configurable tent family."},
     )
     created += was_created
+    valhalla, was_created = get_or_create(
+        session,
+        TentFamily,
+        {"name": "Valhalla"},
+        {"description": "DEMONSTRATION DATA — pole type/formula not yet configured."},
+    )
+    created += was_created
 
+    # code, name, category, tent_family, tracking_mode, pack_size, stage
     equipment_definitions = (
-        ("END", "End", "section", TrackingMode.INDIVIDUAL, BuildStage.MAIN_SECTIONS),
-        ("MIDDLE", "Middle", "section", TrackingMode.INDIVIDUAL, BuildStage.MAIN_SECTIONS),
-        ("POLE", "Pole", "pole", TrackingMode.INDIVIDUAL, BuildStage.POLES_AND_ANCHORS),
+        ("K", "Kayam End", "section", kayam, TrackingMode.INDIVIDUAL, 1, BuildStage.MAIN_SECTIONS),
         (
-            "ANCHOR_SET",
-            "Anchor set",
-            "anchor",
+            "M",
+            "Kayam 20M Middle",
+            "section",
+            kayam,
             TrackingMode.INDIVIDUAL,
+            1,
+            BuildStage.MAIN_SECTIONS,
+        ),
+        (
+            "m",
+            "Kayam 15M Middle",
+            "section",
+            kayam,
+            TrackingMode.INDIVIDUAL,
+            1,
+            BuildStage.MAIN_SECTIONS,
+        ),
+        ("s", "Siam End", "section", kayam, TrackingMode.INDIVIDUAL, 1, BuildStage.MAIN_SECTIONS),
+        (
+            "T",
+            "Kayam Triangle",
+            "section",
+            kayam,
+            TrackingMode.INDIVIDUAL,
+            1,
+            BuildStage.MAIN_SECTIONS,
+        ),
+        (
+            "SC",
+            "Kayam Stage Cover",
+            "section",
+            kayam,
+            TrackingMode.INDIVIDUAL,
+            1,
+            BuildStage.MAIN_SECTIONS,
+        ),
+        (
+            "V",
+            "Valhalla Middle",
+            "section",
+            valhalla,
+            TrackingMode.INDIVIDUAL,
+            1,
+            BuildStage.MAIN_SECTIONS,
+        ),
+        (
+            "VOE",
+            "Valhalla Old End",
+            "section",
+            valhalla,
+            TrackingMode.INDIVIDUAL,
+            1,
+            BuildStage.MAIN_SECTIONS,
+        ),
+        (
+            "VNE",
+            "Valhalla New End",
+            "section",
+            valhalla,
+            TrackingMode.INDIVIDUAL,
+            1,
+            BuildStage.MAIN_SECTIONS,
+        ),
+        (
+            "P",
+            "Kayam King Pole (pair)",
+            "pole",
+            kayam,
+            TrackingMode.INDIVIDUAL,
+            2,
             BuildStage.POLES_AND_ANCHORS,
         ),
         (
-            "ANCILLARY_KIT",
-            "Ancillary kit",
+            "X",
+            "X Poles (pair)",
+            "pole",
+            None,
+            TrackingMode.INDIVIDUAL,
+            2,
+            BuildStage.POLES_AND_ANCHORS,
+        ),
+        (
+            "AD",
+            "Auger Driver",
             "ancillary",
-            TrackingMode.QUANTITY,
+            None,
+            TrackingMode.INDIVIDUAL,
+            1,
             BuildStage.COMPLETION_AND_ANCILLARY,
+        ),
+        (
+            "SB",
+            "Kayam Stake Basher",
+            "ancillary",
+            kayam,
+            TrackingMode.INDIVIDUAL,
+            1,
+            BuildStage.COMPLETION_AND_ANCILLARY,
+        ),
+        (
+            "VB",
+            "Valhalla Stage Basher",
+            "ancillary",
+            valhalla,
+            TrackingMode.INDIVIDUAL,
+            1,
+            BuildStage.COMPLETION_AND_ANCILLARY,
+        ),
+        (
+            "RD",
+            "Rock Drill",
+            "ancillary",
+            None,
+            TrackingMode.INDIVIDUAL,
+            1,
+            BuildStage.COMPLETION_AND_ANCILLARY,
+        ),
+        (
+            "CT",
+            "Crew Tent",
+            "ancillary",
+            None,
+            TrackingMode.INDIVIDUAL,
+            1,
+            BuildStage.COMPLETION_AND_ANCILLARY,
+        ),
+        (
+            "ANCHOR_STILLAGE",
+            "Anchor Stillage",
+            "linked",
+            kayam,
+            TrackingMode.QUANTITY,
+            1,
+            BuildStage.POLES_AND_ANCHORS,
+        ),
+        (
+            "BALE_RING",
+            "Bale Ring",
+            "linked",
+            kayam,
+            TrackingMode.QUANTITY,
+            1,
+            BuildStage.MAIN_SECTIONS,
+        ),
+        (
+            "SIDE_POLE",
+            "Side Pole",
+            "linked",
+            kayam,
+            TrackingMode.QUANTITY,
+            1,
+            BuildStage.MAIN_SECTIONS,
+        ),
+        (
+            "SIDE_GUY",
+            "Side Guy",
+            "linked",
+            kayam,
+            TrackingMode.QUANTITY,
+            1,
+            BuildStage.POLES_AND_ANCHORS,
+        ),
+        (
+            "TIFOR_1_5T",
+            "1.5t Tifor",
+            "linked",
+            kayam,
+            TrackingMode.QUANTITY,
+            1,
+            BuildStage.POLES_AND_ANCHORS,
         ),
     )
     equipment_types: dict[str, EquipmentType] = {}
-    for code, name, category, tracking_mode, stage in equipment_definitions:
+    for code, name, category, family, tracking_mode, pack_size, stage in equipment_definitions:
+        is_demo_placeholder = code in {"X", "AD", "RD", "CT"}
         equipment_type, was_created = get_or_create(
             session,
             EquipmentType,
@@ -125,66 +435,61 @@ def seed_development_data(session: Session, *, include_operational_demo: bool = 
             {
                 "name": name,
                 "category": category,
-                "tent_family_id": kayam.id,
+                "tent_family_id": family.id if family else None,
                 "tracking_mode": tracking_mode,
+                "pack_size": pack_size,
                 "default_build_stage": stage,
-                "notes": "DEMONSTRATION DATA — verify capacity and compatibility before use.",
+                "notes": "DEMONSTRATION DATA — verify before use."
+                if is_demo_placeholder
+                else None,
             },
         )
         equipment_types[code] = equipment_type
         created += was_created
 
-    configuration_components = {
-        4: {"END": 2, "MIDDLE": 1, "POLE": 4, "ANCHOR_SET": 1, "ANCILLARY_KIT": 1},
-        6: {"END": 2, "MIDDLE": 2, "POLE": 6, "ANCHOR_SET": 1, "ANCILLARY_KIT": 1},
-        10: {"END": 2, "MIDDLE": 4, "POLE": 10, "ANCHOR_SET": 1, "ANCILLARY_KIT": 1},
-        12: {"END": 2, "MIDDLE": 5, "POLE": 12, "ANCHOR_SET": 1, "ANCILLARY_KIT": 1},
-    }
-    for pole_count, component_quantities in configuration_components.items():
-        configuration, was_created = get_or_create(
+    if kayam.pole_equipment_type_id is None:
+        kayam.pole_equipment_type_id = equipment_types["P"].id
+        kayam.pole_count_multiplier = 2
+        kayam.pole_count_offset = -2
+        kayam.default_build_hours = Decimal("24")
+        kayam.default_strike_hours = Decimal("16")
+        kayam.minimum_crew = 4
+        kayam.preferred_crew = 6
+
+    # Only the two ratios confirmed by the business owner at the time. Superseded below by the
+    # full real parts matrix from reference/kay.parts.csv — kept here for history/idempotency
+    # (SIDE_GUY/TIFOR_1_5T are placeholder names/quantities the owner has since flagged as
+    # probably redundant with STANDARD_GUYS/TIFOR_1_6T/TIFOR_3_2T below; not merged automatically,
+    # see OPEN_QUESTIONS.md).
+    link_definitions = (
+        ("M", "BALE_RING", 2),
+        ("P", "SIDE_GUY", 2),
+        ("P", "TIFOR_1_5T", 2),
+    )
+    for parent_code, child_code, quantity_per_parent in link_definitions:
+        _, was_created = get_or_create(
             session,
-            TentConfiguration,
-            {"tent_family_id": kayam.id, "name": f"Kayam {pole_count}-pole"},
+            EquipmentLink,
             {
-                "pole_count": pole_count,
-                "default_build_hours": Decimal("0"),
-                "default_strike_hours": Decimal("0"),
-                "minimum_crew": 0,
-                "preferred_crew": 0,
-                "notes": "DEMONSTRATION DATA — set verified durations and crew levels.",
+                "parent_equipment_type_id": equipment_types[parent_code].id,
+                "child_equipment_type_id": equipment_types[child_code].id,
+            },
+            {
+                "quantity_per_parent": quantity_per_parent,
+                "notes": "DEMONSTRATION DATA — confirmed ratio.",
             },
         )
-        if "DEMONSTRATION DATA" in (configuration.notes or ""):
-            configuration.default_build_hours = Decimal("24")
-            configuration.default_strike_hours = Decimal("16")
-            configuration.minimum_crew = 4
-            configuration.preferred_crew = 6
         created += was_created
-        for equipment_code, quantity in component_quantities.items():
-            equipment_type = equipment_types[equipment_code]
-            _, was_created = get_or_create(
-                session,
-                TentConfigurationRequirement,
-                {
-                    "tent_configuration_id": configuration.id,
-                    "equipment_type_id": equipment_type.id,
-                    "required_stage": equipment_type.default_build_stage,
-                },
-                {
-                    "quantity": quantity,
-                    "individually_assignable": equipment_type.tracking_mode
-                    == TrackingMode.INDIVIDUAL,
-                },
-            )
-            created += was_created
+
+    created += _ensure_linked_parts(session, equipment_types)
 
     asset_codes = ["K1", "K2", "K3"] + [f"M{number}" for number in range(1, 6)]
     asset_codes += [f"P{number}" for number in range(1, 21)] + ["A1", "A2"]
     asset_types = {
-        "K": equipment_types["END"],
-        "M": equipment_types["MIDDLE"],
-        "P": equipment_types["POLE"],
-        "A": equipment_types["ANCHOR_SET"],
+        "K": equipment_types["K"],
+        "M": equipment_types["M"],
+        "P": equipment_types["P"],
+        "A": equipment_types["ANCHOR_STILLAGE"],
     }
     for asset_code in asset_codes:
         _, was_created = get_or_create(
@@ -200,6 +505,15 @@ def seed_development_data(session: Session, *, include_operational_demo: bool = 
         )
         created += was_created
 
+    default_role, was_created = get_or_create(
+        session, CrewRole, {"name": "Monkey"}, {"is_default": True}
+    )
+    created += was_created
+    default_employment_type, was_created = get_or_create(
+        session, CrewEmploymentType, {"name": "Crew"}, {"is_default": True}
+    )
+    created += was_created
+
     crew_members: list[CrewMember] = []
     for number in range(1, 5):
         crew_member, was_created = get_or_create(
@@ -207,8 +521,8 @@ def seed_development_data(session: Session, *, include_operational_demo: bool = 
             CrewMember,
             {"name": f"Demo Crew {number}"},
             {
-                "role": "Tent crew",
-                "employment_type": "Demonstration",
+                "role_id": default_role.id,
+                "employment_type_id": default_employment_type.id,
                 "home_location_id": oxford.id,
                 "notes": "DEMONSTRATION DATA — not a real person.",
             },
@@ -313,12 +627,6 @@ def seed_development_data(session: Session, *, include_operational_demo: bool = 
         demo_sites[name] = site
         created += was_created
 
-    configurations_by_poles = {
-        configuration.pole_count: configuration
-        for configuration in session.scalars(
-            select(TentConfiguration).where(TentConfiguration.tent_family_id == kayam.id)
-        )
-    }
     london = ZoneInfo("Europe/London")
     demo_jobs = (
         (
@@ -328,7 +636,7 @@ def seed_development_data(session: Session, *, include_operational_demo: bool = 
             datetime(2026, 6, 18, 8, tzinfo=london),
             datetime(2026, 6, 22, 20, tzinfo=london),
             datetime(2026, 6, 30, 8, tzinfo=london),
-            10,
+            "K-M-M-M-M-K",  # 6 sections -> 10 poles (2 ends, 4 middles)
             CommercialStatus.CONFIRMED,
             PlanningStatus.PLANNER_APPROVED,
         ),
@@ -336,10 +644,10 @@ def seed_development_data(session: Session, *, include_operational_demo: bool = 
             "DEMO-SCO-26",
             "Scotland Demonstration",
             demo_sites["Scotland Demo Site"],
-            datetime(2026, 7, 4, 8, tzinfo=london),
-            datetime(2026, 7, 6, 20, tzinfo=london),
-            datetime(2026, 7, 12, 8, tzinfo=london),
-            6,
+            datetime(2026, 7, 10, 8, tzinfo=london),
+            datetime(2026, 7, 12, 20, tzinfo=london),
+            datetime(2026, 7, 18, 8, tzinfo=london),
+            "K-M-M-K",  # 4 sections -> 6 poles (2 ends, 2 middles)
             CommercialStatus.QUOTED,
             PlanningStatus.PROVISIONAL_PLAN,
         ),
@@ -350,14 +658,14 @@ def seed_development_data(session: Session, *, include_operational_demo: bool = 
             datetime(2026, 8, 10, 8, tzinfo=london),
             datetime(2026, 8, 12, 20, tzinfo=london),
             datetime(2026, 8, 17, 8, tzinfo=london),
-            4,
+            "K-M-K",  # 3 sections -> 4 poles (2 ends, 1 middle)
             CommercialStatus.ENQUIRY,
             PlanningStatus.NOT_PLANNED,
         ),
     )
     job_service = JobService(session)
     jobs_by_code: dict[str, Job] = {}
-    for code, name, site, access_at, up_at, strike_at, poles, commercial, planning in demo_jobs:
+    for code, name, site, access_at, up_at, strike_at, sequence, commercial, planning in demo_jobs:
         job, was_created = get_or_create(
             session,
             Job,
@@ -371,10 +679,6 @@ def seed_development_data(session: Session, *, include_operational_demo: bool = 
                 "contract_revenue": Decimal("0"),
                 "currency": "GBP",
                 "site_access_at": access_at,
-                "must_be_up_at": up_at,
-                "show_start_at": up_at,
-                "show_end_at": strike_at,
-                "strike_available_at": strike_at,
                 "site_clear_by": strike_at + timedelta(days=2),
                 "operational_notes": "DEMONSTRATION DATA — not operational work.",
             },
@@ -387,43 +691,49 @@ def seed_development_data(session: Session, *, include_operational_demo: bool = 
                 "DEMO-UK-26": Decimal("18000"),
             }[code]
         created += was_created
-        _, requirement_created = get_or_create(
-            session,
-            JobTentRequirement,
-            {"job_id": job.id, "tent_configuration_id": configurations_by_poles[poles].id},
-            {"quantity": 1, "notes": "DEMONSTRATION DATA"},
-        )
-        created += requirement_created
+        if not job.tent_requirements:
+            job_service.add_tent_requirement(
+                job.id,
+                {
+                    "sequence": sequence,
+                    "quantity": 1,
+                    "custom_name": None,
+                    "contracted_up_at": up_at,
+                    "contracted_down_at": strike_at,
+                    "notes": "DEMONSTRATION DATA",
+                },
+            )
+            created += 1
         session.expire(job, ["tent_requirements", "equipment_requirements", "phases"])
-        job_service.regenerate_requirements(job)
-        job_service.generate_phases(job)
 
     if include_operational_demo:
         roskilde = jobs_by_code["DEMO-ROS-26"]
         roskilde_build = next(
             phase for phase in roskilde.phases if phase.phase_type == PhaseType.BUILD
         )
-        for index, crew_member in enumerate(crew_members):
-            _, was_created = get_or_create(
-                session,
-                CrewAssignment,
-                {"job_phase_id": roskilde_build.id, "crew_member_id": crew_member.id},
+        if roskilde_build.tentmaster_id is None:
+            roskilde_build.tentmaster_id = tentmasters[0].id
+            created += 1
+        # Demo Crew 1 is Max/Martin's own roster member (see the membership loop above) and is
+        # derived onto this phase automatically. This local crew booking demonstrates the other
+        # source of headcount: anonymous local/hired crew booked onto the job over a date range,
+        # joining whichever phase(s) are active over that window.
+        if not roskilde.local_crew_bookings:
+            job_service.add_local_crew_booking(
+                roskilde.id,
                 {
-                    "tentmaster_id": tentmasters[index].id,
+                    "headcount": 4,
                     "start_at": roskilde_build.start_at,
                     "end_at": roskilde_build.end_at,
-                    "role": "Tent crew",
-                    "assignment_source": RecordSource.MANUAL,
-                    "locked": True,
-                    "notes": "DEMONSTRATION DATA",
+                    "notes": "DEMONSTRATION DATA — local crew booked for the build",
                 },
             )
-            created += was_created
+            created += 1
 
         end_requirement = next(
             requirement
             for requirement in roskilde.equipment_requirements
-            if requirement.equipment_type.code == "END"
+            if requirement.equipment_type.code == "K"
         )
         demo_assets = session.scalars(
             select(EquipmentAsset).where(EquipmentAsset.asset_code.in_(["K1", "K2"]))
@@ -514,7 +824,7 @@ def seed_development_data(session: Session, *, include_operational_demo: bool = 
                 {"quantity": 1, "notes": "DEMONSTRATION DATA"},
             )
             created += was_created
-        for sequence, mode, origin_label, destination_label, depart, arrive in (
+        for leg_sequence, mode, origin_label, destination_label, depart, arrive in (
             (
                 1,
                 JourneyMode.VAN,
@@ -535,7 +845,7 @@ def seed_development_data(session: Session, *, include_operational_demo: bool = 
             _, was_created = get_or_create(
                 session,
                 CrewJourneyLeg,
-                {"crew_movement_id": crew_move.id, "sequence": sequence},
+                {"crew_movement_id": crew_move.id, "sequence": leg_sequence},
                 {
                     "mode": mode,
                     "origin_label": origin_label,

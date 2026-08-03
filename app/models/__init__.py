@@ -2,15 +2,17 @@
 
 from app.models.administration import (
     CrewAvailability,
+    CrewAvailabilityWindow,
+    CrewEmploymentType,
     CrewMember,
+    CrewRole,
     EquipmentAsset,
+    EquipmentLink,
     EquipmentType,
     Haulier,
     Location,
     Lorry,
     LorryType,
-    TentConfiguration,
-    TentConfigurationRequirement,
     TentFamily,
     Tentmaster,
     TentmasterMembership,
@@ -19,16 +21,25 @@ from app.models.administration import (
 from app.models.audit import AuditLog
 from app.models.costing import LoadCostAllocation, SupplierInvoice
 from app.models.crew_movements import CrewJourneyLeg, CrewMovement, CrewMovementPassenger
-from app.models.crew_planning import CrewActivity, CrewAssignment
+from app.models.crew_planning import CrewActivity
 from app.models.equipment_planning import EquipmentAssignment, EquipmentCompatibility
-from app.models.jobs import Job, JobEquipmentRequirement, JobPhase, JobTentRequirement
+from app.models.jobs import (
+    Job,
+    JobEquipmentRequirement,
+    JobPhase,
+    JobTentRequirement,
+    JobTentSection,
+    LocalCrewBooking,
+)
 from app.models.logistics import EquipmentMovement, Load, LoadItem, RouteCache
 
 __all__ = [
     "CrewAvailability",
+    "CrewAvailabilityWindow",
+    "CrewEmploymentType",
+    "CrewRole",
     "AuditLog",
     "CrewActivity",
-    "CrewAssignment",
     "CrewMember",
     "CrewJourneyLeg",
     "CrewMovement",
@@ -36,6 +47,7 @@ __all__ = [
     "EquipmentAsset",
     "EquipmentAssignment",
     "EquipmentCompatibility",
+    "EquipmentLink",
     "EquipmentType",
     "EquipmentMovement",
     "Haulier",
@@ -43,16 +55,16 @@ __all__ = [
     "JobEquipmentRequirement",
     "JobPhase",
     "JobTentRequirement",
+    "JobTentSection",
     "Location",
+    "LocalCrewBooking",
     "Load",
     "LoadCostAllocation",
     "LoadItem",
     "RouteCache",
     "Lorry",
     "LorryType",
-    "TentConfiguration",
     "SupplierInvoice",
-    "TentConfigurationRequirement",
     "TentFamily",
     "Tentmaster",
     "TentmasterMembership",

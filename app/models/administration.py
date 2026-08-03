@@ -113,24 +113,73 @@ class Location(TimestampMixin, Base):
 
 
 class TentFamily(Base):
+    """A family (Kayam, Valhalla, ...) defines how its own section sequences derive poles.
+
+    `pole_count_multiplier`/`pole_count_offset` implement `poles = sections * multiplier +
+    offset` (Kayam's known formula is sections*2-2, i.e. multiplier=2, offset=-2), and
+    `pole_equipment_type_id` says which equipment type's assets fulfil that derived pole
+    requirement (its `pack_size` — e.g. 2 for a "pair" pole type — converts the physical pole
+    count into an asset quantity). Configurable per family rather than hardcoded, since a
+    different family may use a different formula or pole type.
+    """
+
     __tablename__ = "tent_families"
+    __table_args__ = (
+        CheckConstraint("pole_count_multiplier != 0", name="pole_multiplier_nonzero"),
+        CheckConstraint("default_build_hours >= 0", name="build_hours_nonnegative"),
+        CheckConstraint("default_strike_hours >= 0", name="strike_hours_nonnegative"),
+        CheckConstraint("minimum_crew >= 0", name="minimum_crew_nonnegative"),
+        CheckConstraint("preferred_crew >= minimum_crew", name="preferred_crew_minimum"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(100), unique=True, index=True)
     description: Mapped[str | None] = mapped_column(Text)
+    pole_equipment_type_id: Mapped[int | None] = mapped_column(ForeignKey("equipment_types.id"))
+    pole_count_multiplier: Mapped[int] = mapped_column(Integer, default=2)
+    pole_count_offset: Mapped[int] = mapped_column(Integer, default=-2)
+    # Per-tent build/strike duration and crew defaults used to be per named TentConfiguration
+    # (e.g. "Kayam 10-pole"); simplified to per-family since size is now derived from the section
+    # sequence, not a named template. Still overridable per job (JobTentRequirement's own
+    # *_override fields).
+    default_build_hours: Mapped[Decimal] = mapped_column(Numeric(8, 2), default=0)
+    default_strike_hours: Mapped[Decimal] = mapped_column(Numeric(8, 2), default=0)
+    minimum_crew: Mapped[int] = mapped_column(Integer, default=0)
+    preferred_crew: Mapped[int] = mapped_column(Integer, default=0)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
 
-    equipment_types: Mapped[list[EquipmentType]] = relationship(back_populates="tent_family")
-    configurations: Mapped[list[TentConfiguration]] = relationship(back_populates="tent_family")
+    equipment_types: Mapped[list[EquipmentType]] = relationship(
+        back_populates="tent_family", foreign_keys="EquipmentType.tent_family_id"
+    )
+    pole_equipment_type: Mapped[EquipmentType | None] = relationship(
+        foreign_keys=[pole_equipment_type_id]
+    )
 
 
 class EquipmentType(Base):
+    """`category` distinguishes what a type is for in the section-sequence model:
+
+    - "section": a bookable tent section (K, M, m, S, T, SC, V, ...) — the only categories a
+      planner may type into a job's section sequence.
+    - "pole": a derived pole type (P, X) — never typed directly; quantity is computed from the
+      section count via the owning `TentFamily`'s formula.
+    - "linked": equipment implied by a section or pole via `EquipmentLink`, never entered
+      directly and never shown on the main loading list, only in a load's detailed view.
+    - "ancillary": individually tracked equipment unrelated to any tent sequence (Auger Driver,
+      Stake Basher, Rock Drill, Crew Tent, ...), added to jobs/loads manually as needed.
+
+    `pack_size` is how many physical units one tracked asset of this type represents (e.g. 2 for
+    a pole type sold/tracked as a pair) — used to convert a physical quantity into an asset
+    quantity when expanding requirements.
+    """
+
     __tablename__ = "equipment_types"
     __table_args__ = (
         CheckConstraint("section_capacity_units >= 0", name="section_units_nonnegative"),
         CheckConstraint("pole_capacity_units >= 0", name="pole_units_nonnegative"),
         CheckConstraint("ancillary_capacity_units >= 0", name="ancillary_units_nonnegative"),
         CheckConstraint("weight_kg >= 0", name="weight_nonnegative"),
+        CheckConstraint("pack_size > 0", name="pack_size_positive"),
         CheckConstraint(
             "maintenance_interval_days IS NULL OR maintenance_interval_days >= 0",
             name="maintenance_interval_nonnegative",
@@ -145,6 +194,7 @@ class EquipmentType(Base):
     tracking_mode: Mapped[TrackingMode] = mapped_column(
         Enum(TrackingMode, native_enum=False, length=20), default=TrackingMode.INDIVIDUAL
     )
+    pack_size: Mapped[int] = mapped_column(Integer, default=1)
     section_capacity_units: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=0)
     pole_capacity_units: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=0)
     ancillary_capacity_units: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=0)
@@ -157,10 +207,14 @@ class EquipmentType(Base):
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     notes: Mapped[str | None] = mapped_column(Text)
 
-    tent_family: Mapped[TentFamily | None] = relationship(back_populates="equipment_types")
+    tent_family: Mapped[TentFamily | None] = relationship(
+        back_populates="equipment_types", foreign_keys=[tent_family_id]
+    )
     assets: Mapped[list[EquipmentAsset]] = relationship(back_populates="equipment_type")
-    configuration_requirements: Mapped[list[TentConfigurationRequirement]] = relationship(
-        back_populates="equipment_type"
+    outgoing_links: Mapped[list[EquipmentLink]] = relationship(
+        back_populates="parent_equipment_type",
+        foreign_keys="EquipmentLink.parent_equipment_type_id",
+        cascade="all, delete-orphan",
     )
 
 
@@ -192,58 +246,58 @@ class EquipmentAsset(TimestampMixin, Base):
     assignments: Mapped[list[EquipmentAssignment]] = relationship(back_populates="equipment_asset")
 
 
-class TentConfiguration(Base):
-    __tablename__ = "tent_configurations"
+class EquipmentLink(Base):
+    """A cascading BOM edge: booking one `parent_equipment_type` implies `quantity_per_parent`
+    of `child_equipment_type`, recursively (a child may itself be a parent of further links).
+
+    Admin-editable, matching how the old flat `TentConfigurationRequirement` BOM worked, but
+    keyed to individual equipment types rather than a named tent template so it cascades through
+    any depth (e.g. M -> side pole, M -> anchor stillage, M -> bale ring; P -> side guy, P ->
+    Tifor). `app/services/roster.py`-style expansion code guards against cycles defensively even
+    though this direct self-link check catches the simplest case at write time.
+    """
+
+    __tablename__ = "equipment_links"
     __table_args__ = (
-        UniqueConstraint("tent_family_id", "name"),
-        CheckConstraint("pole_count > 0", name="pole_count_positive"),
-        CheckConstraint("default_build_hours >= 0", name="build_hours_nonnegative"),
-        CheckConstraint("default_strike_hours >= 0", name="strike_hours_nonnegative"),
-        CheckConstraint("minimum_crew >= 0", name="minimum_crew_nonnegative"),
-        CheckConstraint("preferred_crew >= minimum_crew", name="preferred_crew_minimum"),
+        UniqueConstraint("parent_equipment_type_id", "child_equipment_type_id"),
+        CheckConstraint("quantity_per_parent > 0", name="quantity_positive"),
+        CheckConstraint(
+            "parent_equipment_type_id != child_equipment_type_id", name="no_self_link"
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    tent_family_id: Mapped[int] = mapped_column(ForeignKey("tent_families.id"))
-    name: Mapped[str] = mapped_column(String(100))
-    pole_count: Mapped[int] = mapped_column(Integer)
-    width_m: Mapped[Decimal | None] = mapped_column(Numeric(8, 2))
-    length_m: Mapped[Decimal | None] = mapped_column(Numeric(8, 2))
-    default_build_hours: Mapped[Decimal] = mapped_column(Numeric(8, 2), default=0)
-    default_strike_hours: Mapped[Decimal] = mapped_column(Numeric(8, 2), default=0)
-    minimum_crew: Mapped[int] = mapped_column(Integer, default=0)
-    preferred_crew: Mapped[int] = mapped_column(Integer, default=0)
-    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    parent_equipment_type_id: Mapped[int] = mapped_column(
+        ForeignKey("equipment_types.id", ondelete="CASCADE")
+    )
+    child_equipment_type_id: Mapped[int] = mapped_column(ForeignKey("equipment_types.id"))
+    quantity_per_parent: Mapped[int] = mapped_column(Integer)
     notes: Mapped[str | None] = mapped_column(Text)
 
-    tent_family: Mapped[TentFamily] = relationship(back_populates="configurations")
-    requirements: Mapped[list[TentConfigurationRequirement]] = relationship(
-        back_populates="tent_configuration", cascade="all, delete-orphan"
+    parent_equipment_type: Mapped[EquipmentType] = relationship(
+        back_populates="outgoing_links", foreign_keys=[parent_equipment_type_id]
+    )
+    child_equipment_type: Mapped[EquipmentType] = relationship(
+        foreign_keys=[child_equipment_type_id]
     )
 
 
-class TentConfigurationRequirement(Base):
-    __tablename__ = "tent_configuration_requirements"
-    __table_args__ = (
-        UniqueConstraint("tent_configuration_id", "equipment_type_id", "required_stage"),
-        CheckConstraint("quantity > 0", name="quantity_positive"),
-    )
+class CrewRole(Base):
+    __tablename__ = "crew_roles"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    tent_configuration_id: Mapped[int] = mapped_column(
-        ForeignKey("tent_configurations.id", ondelete="CASCADE")
-    )
-    equipment_type_id: Mapped[int] = mapped_column(ForeignKey("equipment_types.id"))
-    quantity: Mapped[int] = mapped_column(Integer)
-    required_stage: Mapped[BuildStage] = mapped_column(
-        Enum(BuildStage, native_enum=False, length=40)
-    )
-    individually_assignable: Mapped[bool] = mapped_column(Boolean, default=True)
+    name: Mapped[str] = mapped_column(String(100), unique=True, index=True)
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
 
-    tent_configuration: Mapped[TentConfiguration] = relationship(back_populates="requirements")
-    equipment_type: Mapped[EquipmentType] = relationship(
-        back_populates="configuration_requirements"
-    )
+
+class CrewEmploymentType(Base):
+    __tablename__ = "crew_employment_types"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(100), unique=True, index=True)
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
 
 
 class CrewMember(Base):
@@ -257,8 +311,8 @@ class CrewMember(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(150), index=True)
-    role: Mapped[str] = mapped_column(String(100))
-    employment_type: Mapped[str] = mapped_column(String(100))
+    role_id: Mapped[int] = mapped_column(ForeignKey("crew_roles.id"))
+    employment_type_id: Mapped[int] = mapped_column(ForeignKey("crew_employment_types.id"))
     hourly_cost: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=0)
     overtime_hourly_cost: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=0)
     travel_hourly_cost: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=0)
@@ -270,9 +324,14 @@ class CrewMember(Base):
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     notes: Mapped[str | None] = mapped_column(Text)
 
+    role: Mapped[CrewRole] = relationship()
+    employment_type: Mapped[CrewEmploymentType] = relationship()
     home_location: Mapped[Location | None] = relationship()
     memberships: Mapped[list[TentmasterMembership]] = relationship(back_populates="crew_member")
     availability: Mapped[list[CrewAvailability]] = relationship(
+        back_populates="crew_member", cascade="all, delete-orphan"
+    )
+    availability_windows: Mapped[list[CrewAvailabilityWindow]] = relationship(
         back_populates="crew_member", cascade="all, delete-orphan"
     )
 
@@ -370,8 +429,14 @@ class Tentmaster(Base):
 
 
 class TentmasterMembership(Base):
+    """`end_at` is exclusive: "first day no longer active." Open-ended when NULL.
+
+    Half-open boundaries (rather than an inclusive last working day) let a crew member end with
+    one Tentmaster and start with another on the same calendar date.
+    """
+
     __tablename__ = "tentmaster_memberships"
-    __table_args__ = (CheckConstraint("end_at IS NULL OR end_at >= start_at", name="date_order"),)
+    __table_args__ = (CheckConstraint("end_at IS NULL OR end_at > start_at", name="date_order"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     tentmaster_id: Mapped[int] = mapped_column(ForeignKey("tentmasters.id"))
@@ -399,6 +464,27 @@ class CrewAvailability(Base):
     notes: Mapped[str | None] = mapped_column(Text)
 
     crew_member: Mapped[CrewMember] = relationship(back_populates="availability")
+
+
+class CrewAvailabilityWindow(Base):
+    """An explicit window during which a crew member can work at all (e.g. a season contract).
+
+    Multiple windows are allowed per crew member (25 May-17 Jun, then 28 Jun-31 Dec, etc), and
+    dates are inclusive at both ends, matching `CrewAvailability`. If a crew member has no windows
+    at all, they are treated as always available -- this constrains membership derivation only
+    when a window has been entered, rather than requiring one for every crew member up front.
+    """
+
+    __tablename__ = "crew_availability_windows"
+    __table_args__ = (CheckConstraint("end_at IS NULL OR end_at >= start_at", name="date_order"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    crew_member_id: Mapped[int] = mapped_column(ForeignKey("crew_members.id"), index=True)
+    start_at: Mapped[date] = mapped_column(Date)
+    end_at: Mapped[date | None] = mapped_column(Date)
+    notes: Mapped[str | None] = mapped_column(Text)
+
+    crew_member: Mapped[CrewMember] = relationship(back_populates="availability_windows")
 
 
 class Lorry(Base):

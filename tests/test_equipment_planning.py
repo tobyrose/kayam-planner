@@ -28,10 +28,10 @@ def seeded_requirements(
     scotland = session.scalar(select(Job).where(Job.job_code == "DEMO-SCO-26"))
     assert asset is not None and roskilde is not None and scotland is not None
     first = next(
-        item for item in roskilde.equipment_requirements if item.equipment_type.code == "END"
+        item for item in roskilde.equipment_requirements if item.equipment_type.code == "K"
     )
     second = next(
-        item for item in scotland.equipment_requirements if item.equipment_type.code == "END"
+        item for item in scotland.equipment_requirements if item.equipment_type.code == "K"
     )
     return service, asset, first, second
 
@@ -102,7 +102,7 @@ def test_incompatible_asset_is_rejected(session: Session) -> None:
     job = session.scalar(select(Job).where(Job.job_code == "DEMO-ROS-26"))
     assert asset is not None and job is not None
     pole_requirement = next(
-        item for item in job.equipment_requirements if item.equipment_type.code == "POLE"
+        item for item in job.equipment_requirements if item.equipment_type.code == "P"
     )
 
     with pytest.raises(IncompatibleEquipmentError):
@@ -124,7 +124,8 @@ def test_locked_assignment_survives_automatic_update(session: Session) -> None:
 def test_asset_state_and_confirmation_workflow(session: Session) -> None:
     service, asset, first, _ = seeded_requirements(session)
     assignment = service.assign(allocation_payload(asset, first, "soft"))
-    assert service.derive_state(assignment, first.job.must_be_up_at) == "in_use"
+    up_at = first.job.tent_requirements[0].contracted_up_at
+    assert service.derive_state(assignment, up_at) == "in_use"
 
     job = service.confirm_job(first.job_id, [assignment.id])
     assert assignment.allocation_strength == AllocationStrength.HARD

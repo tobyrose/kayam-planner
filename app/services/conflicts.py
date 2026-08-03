@@ -6,11 +6,18 @@ from datetime import timedelta
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from app.models.crew_planning import CrewAssignment
 from app.models.equipment_planning import AllocationStrength, AssignmentStatus, EquipmentAssignment
-from app.models.jobs import Job, JobEquipmentRequirement, JobPhase, RequirementStatus
+from app.models.jobs import (
+    CommercialStatus,
+    Job,
+    JobEquipmentRequirement,
+    JobPhase,
+    RequirementStatus,
+)
 from app.models.logistics import Load, LoadItem
+from app.services.crew_planning import CrewPlanningService
 from app.services.logistics import LogisticsService
+from app.services.roster import RosterIndex
 
 
 @dataclass(frozen=True)
@@ -101,35 +108,34 @@ class ConflictCentreService:
                         f"/jobs/{assignment.requirement.job_id}",
                     )
                 )
-        crew = self.session.scalars(
-            select(CrewAssignment)
-            .where(CrewAssignment.crew_member_id.is_not(None))
-            .options(
-                selectinload(CrewAssignment.crew_member),
-                selectinload(CrewAssignment.job_phase).selectinload(JobPhase.job),
-            )
-            .order_by(CrewAssignment.crew_member_id, CrewAssignment.start_at)
+        tentmaster_phases = self.session.scalars(
+            select(JobPhase)
+            .where(JobPhase.tentmaster_id.is_not(None))
+            .options(selectinload(JobPhase.job), selectinload(JobPhase.tentmaster))
+            .order_by(JobPhase.tentmaster_id, JobPhase.start_at)
         ).all()
-        by_person: dict[int, list[CrewAssignment]] = {}
-        for crew_assignment in crew:
-            assert crew_assignment.crew_member_id is not None
-            by_person.setdefault(crew_assignment.crew_member_id, []).append(crew_assignment)
-        for crew_assignments in by_person.values():
-            for previous_crew, current_crew in zip(
-                crew_assignments, crew_assignments[1:], strict=False
-            ):
-                if previous_crew.end_at > current_crew.start_at:
-                    assert current_crew.crew_member is not None
+        by_tentmaster: dict[int, list[JobPhase]] = {}
+        for phase in tentmaster_phases:
+            assert phase.tentmaster_id is not None
+            by_tentmaster.setdefault(phase.tentmaster_id, []).append(phase)
+        for team_phases in by_tentmaster.values():
+            for previous_phase, current_phase in zip(team_phases, team_phases[1:], strict=False):
+                if previous_phase.end_at > current_phase.start_at:
+                    hard = (
+                        previous_phase.job.commercial_status == CommercialStatus.CONFIRMED
+                        or current_phase.job.commercial_status == CommercialStatus.CONFIRMED
+                    )
+                    assert current_phase.tentmaster is not None
                     items.append(
                         ConflictItem(
-                            "hard",
-                            "crew",
-                            f"{current_crew.crew_member.name} overlaps "
-                            f"{previous_crew.job_phase.job.job_code} and "
-                            f"{current_crew.job_phase.job.job_code}",
-                            "/planning/crew",
+                            "hard" if hard else "conditional",
+                            "tentmaster",
+                            f"{current_phase.tentmaster.name} double-booked between "
+                            f"{previous_phase.job.job_code} and {current_phase.job.job_code}",
+                            "/planning",
                         )
                     )
+        crew_planning = CrewPlanningService(self.session)
         unresolved = self.session.scalars(
             select(JobEquipmentRequirement).where(
                 JobEquipmentRequirement.status.in_(
@@ -148,10 +154,22 @@ class ConflictCentreService:
                 )
             )
         phases = self.session.scalars(
-            select(JobPhase).options(selectinload(JobPhase.crew_assignments))
+            select(JobPhase).options(
+                selectinload(JobPhase.job).selectinload(Job.local_crew_bookings)
+            )
         ).all()
+        roster_index = (
+            RosterIndex.build(
+                self.session,
+                min(phase.start_at for phase in phases),
+                max(phase.end_at for phase in phases),
+            )
+            if phases
+            else None
+        )
         for phase in phases:
-            shortfall = phase.required_headcount - len(phase.crew_assignments)
+            assert roster_index is not None
+            shortfall = crew_planning.phase_headcount(phase, roster_index=roster_index).shortfall
             if shortfall > 0:
                 items.append(
                     ConflictItem(
@@ -176,7 +194,8 @@ class ConflictCentreService:
             has_receiver = bool(load.movement.destination.receiving_notes) or any(
                 phase.job.location_id == load.movement.destination_location_id
                 and phase.start_at <= load.movement.arrive_by <= phase.end_at
-                and phase.crew_assignments
+                and roster_index is not None
+                and crew_planning.phase_headcount(phase, roster_index=roster_index).assigned > 0
                 for phase in phases
             )
             if not has_receiver:
