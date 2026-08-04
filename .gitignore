@@ -10,6 +10,7 @@ __pycache__/
 htmlcov/
 instance/*
 !instance/.gitkeep
+!instance/kayam.db
 backups/
 exports/
 *.diagnostic.json
