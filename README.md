@@ -30,6 +30,9 @@ V1 milestones 1–12 are implemented as a runnable local-first planner:
 The implementation is a V1 planning baseline. Business constants still listed in
 `OPEN_QUESTIONS.md` must be verified before production use.
 
+**New to the project?** Read [`HANDOFF.md`](HANDOFF.md) first (what it does, what’s built, what’s
+open, next priorities). Then `AGENTS.md` if you are coding.
+
 ## Requirements
 
 - Python 3.12 or newer

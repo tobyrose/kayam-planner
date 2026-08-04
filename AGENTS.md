@@ -6,14 +6,16 @@ This repository contains the Kayam Seasonal Planning System: a time-and-space-aw
 
 Before making architectural or business-rule changes, read:
 
-1. `SPECIFICATION.md`
-2. `DECISIONS.md`
-3. `OPEN_QUESTIONS.md`
-4. `IMPLEMENTATION_PLAN.md`
-5. `LOAD_ENGINE_DESIGN.md` — active design conversation (not yet implemented) for the automatic
-   load-design/routing engine and the Loads Diagram; read this before touching either topic.
+1. `HANDOFF.md` — short orientation: what the app does, built vs open, next-session priorities
+2. `SPECIFICATION.md`
+3. `DECISIONS.md`
+4. `OPEN_QUESTIONS.md`
+5. `IMPLEMENTATION_PLAN.md`
+6. `LOAD_ENGINE_DESIGN.md` — design notes for the automatic load-design/routing engine and Loads
+   Diagram (V1 engine + diagram shipped; further optimisation still design/open)
 
-Treat `SPECIFICATION.md` as the primary product source of truth.
+Treat `SPECIFICATION.md` as the primary product source of truth. For “where are we?”, start with
+`HANDOFF.md`.
 
 ## Core working rules
 
