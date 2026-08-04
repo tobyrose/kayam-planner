@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 
 import pytest
 from sqlalchemy import select
@@ -57,15 +58,19 @@ def create_load(
 def test_load_capacity_within_and_over_limit(session: Session) -> None:
     service, origin, destination, lorry_type = seeded_logistics(session)
     load = create_load(service, origin, destination, lorry_type)
-    equipment_type = session.scalar(select(EquipmentType).where(EquipmentType.code == "P"))
+    equipment_type = session.scalar(select(EquipmentType).where(EquipmentType.code == "K"))
     assert equipment_type is not None
-    equipment_type.pole_capacity_units = 1
-    lorry_type.pole_capacity_units = 100
+    # Q042: K = 1.2 points; Flat = 7.2 → six Ks = 7.2 exactly (within/near boundary is 85%)
+    lorry_type.section_capacity_units = Decimal("7.2")
+    equipment_type.section_capacity_units = Decimal("1.2")
     service.add_item({"load_id": load.id, "equipment_type_id": equipment_type.id, "quantity": 1})
-    assert service.capacity(load).status == "within"
-    load.items[0].quantity = 10000
+    cap = service.capacity(load)
+    assert cap.status == "within"
+    assert cap.section_units == Decimal("1.2")
+    load.items[0].quantity = 10  # 12 points on 7.2 capacity
     session.commit()
     assert service.capacity(load).status == "over"
+    assert service.capacity(load).section_units == Decimal("12.0")
 
 
 def test_one_movement_supports_multiple_numbered_loads(session: Session) -> None:
@@ -78,7 +83,69 @@ def test_one_movement_supports_multiple_numbered_loads(session: Session) -> None
             "lorry_type_id": lorry_type.id,
         }
     )
-    assert second.display_code.endswith("LD2")
+    assert second.display_code == "L2"
+
+
+def test_create_movement_and_load_auto_allocate_codes_and_numbers(session: Session) -> None:
+    service, origin, destination, lorry_type = seeded_logistics(session)
+    movement = service.create_movement(
+        {
+            "origin_location_id": origin.id,
+            "destination_location_id": destination.id,
+            "depart_after": datetime(2026, 6, 1, 8, tzinfo=UTC),
+            "arrive_by": datetime(2026, 6, 1, 16, tzinfo=UTC),
+        }
+    )
+    assert movement.movement_code.startswith("MV-")
+    load = service.create_load(
+        {
+            "equipment_movement_id": movement.id,
+            "lorry_type_id": lorry_type.id,
+        }
+    )
+    assert load.load_number == service.next_load_number() - 1
+    assert load.load_number >= 1
+
+
+def test_new_load_form_omits_movement_code_and_standard_artic(
+    session: Session, client
+) -> None:  # type: ignore[no-untyped-def]
+    seed_development_data(session)
+    response = client.get("/loads/new")
+    assert response.status_code == 200
+    assert 'name="movement_code"' not in response.text
+    assert "Standard artic" not in response.text
+    assert "depart_after_date" in response.text
+    assert 'type="time"' in response.text
+    assert "Curtain" in response.text or "Flat" in response.text
+
+
+def test_new_load_form_posts_with_date_and_time(
+    session: Session, client
+) -> None:  # type: ignore[no-untyped-def]
+    seed_development_data(session)
+    locations = session.scalars(select(Location).order_by(Location.id)).all()
+    lorry = session.scalar(select(LorryType).where(LorryType.name == "Flat"))
+    assert len(locations) >= 2 and lorry is not None
+    response = client.post(
+        "/loads/new",
+        data={
+            "origin_location_id": str(locations[0].id),
+            "destination_location_id": str(locations[1].id),
+            "depart_after_date": "2026-06-10",
+            "depart_after_time": "09:30",
+            "arrive_by_date": "2026-06-11",
+            "arrive_by_time": "18:00",
+            "lorry_type_id": str(lorry.id),
+            "status": "required",
+        },
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    assert response.headers["location"].startswith("/loads/")
+    load = session.scalar(select(Load).order_by(Load.id.desc()))
+    assert load is not None
+    assert load.load_number >= 1
 
 
 def test_asset_location_continuity_and_locked_load(session: Session) -> None:

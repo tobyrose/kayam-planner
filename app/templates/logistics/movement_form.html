@@ -1,14 +1,66 @@
 {% extends "base.html" %}
 {% block title %}New load · Kayam Planner{% endblock %}
-{% block content %}<h1>New equipment movement</h1>
+{% block content %}
+<h1>New equipment movement</h1>
+<p class="text-muted">Load number is assigned automatically (next: <strong>LD {{ next_load_number }}</strong>).</p>
+{% if errors %}<div class="alert alert-danger"><ul class="mb-0">{% for error in errors %}<li>{{ error }}</li>{% endfor %}</ul></div>{% endif %}
 <form method="post" class="planning-section admin-form row g-3">
-  <div class="col-md-6"><label class="form-label">Movement code</label><input class="form-control" name="movement_code" placeholder="MV-026" required></div>
-  <div class="col-md-3"><label class="form-label">Load number</label><input class="form-control" type="number" min="1" name="load_number" value="1" required></div>
-  <div class="col-md-3"><label class="form-label">Status</label><select class="form-select" name="status">{% for status in movement_statuses %}<option value="{{ status.value }}">{{ status.value|replace('_', ' ')|title }}</option>{% endfor %}</select></div>
-  <div class="col-md-6"><label class="form-label">Origin</label><select class="form-select" name="origin_location_id" required>{% for location in locations %}<option value="{{ location.id }}">{{ location.name }}</option>{% endfor %}</select></div>
-  <div class="col-md-6"><label class="form-label">Destination</label><select class="form-select" name="destination_location_id" required>{% for location in locations %}<option value="{{ location.id }}">{{ location.name }}</option>{% endfor %}</select></div>
-  <div class="col-md-6"><label class="form-label">Depart after</label><input class="form-control" type="datetime-local" name="depart_after" required></div>
-  <div class="col-md-6"><label class="form-label">Arrive by</label><input class="form-control" type="datetime-local" name="arrive_by" required></div>
-  <div class="col-12"><label class="form-label">Lorry type</label><select class="form-select" name="lorry_type_id" required>{% for item in lorry_types %}<option value="{{ item.id }}">{{ item.name }}</option>{% endfor %}</select></div>
-  <div class="col-12"><button class="btn btn-primary">Create movement and first load</button></div>
-</form>{% endblock %}
+  <div class="col-md-4">
+    <label class="form-label">Status</label>
+    <select class="form-select" name="status">
+      {% for status in movement_statuses %}
+      <option value="{{ status.value }}" {% if values.get('status') == status.value %}selected{% endif %}>{{ status.value|replace('_', ' ')|title }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-md-4">
+    <label class="form-label">Lorry type</label>
+    <select class="form-select" name="lorry_type_id" required>
+      {% for item in lorry_types %}
+      <option value="{{ item.id }}" {% if values.get('lorry_type_id')|string == item.id|string %}selected{% endif %}>{{ item.name }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-md-4">
+    <label class="form-label">Load number</label>
+    <input class="form-control" type="text" value="LD {{ next_load_number }} (auto)" disabled>
+  </div>
+  <div class="col-md-6">
+    <label class="form-label">Origin</label>
+    <select class="form-select" name="origin_location_id" required>
+      {% for location_id, label in location_options %}
+      <option value="{{ location_id }}" {% if values.get('origin_location_id')|string == location_id|string %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-md-6">
+    <label class="form-label">Destination</label>
+    <select class="form-select" name="destination_location_id" required>
+      {% for location_id, label in location_options %}
+      <option value="{{ location_id }}" {% if values.get('destination_location_id')|string == location_id|string %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+    <div class="form-text">Job name shown when a job is booked at that location.</div>
+  </div>
+  <div class="col-md-3">
+    <label class="form-label" for="depart_after_date">Depart date</label>
+    <input class="form-control" type="date" id="depart_after_date" name="depart_after_date" value="{{ values.get('depart_after_date') or '' }}" required>
+  </div>
+  <div class="col-md-3">
+    <label class="form-label" for="depart_after_time">Depart time</label>
+    <input class="form-control" type="time" id="depart_after_time" name="depart_after_time" value="{{ values.get('depart_after_time') or '08:00' }}" required step="60">
+  </div>
+  <div class="col-md-3">
+    <label class="form-label" for="arrive_by_date">Arrive date</label>
+    <input class="form-control" type="date" id="arrive_by_date" name="arrive_by_date" value="{{ values.get('arrive_by_date') or '' }}" required>
+  </div>
+  <div class="col-md-3">
+    <label class="form-label" for="arrive_by_time">Arrive time</label>
+    <input class="form-control" type="time" id="arrive_by_time" name="arrive_by_time" value="{{ values.get('arrive_by_time') or '17:00' }}" required step="60">
+  </div>
+  <div class="col-12">
+    <button class="btn btn-primary" type="submit">Create movement and first load</button>
+    <a class="btn btn-outline-secondary" href="/loads">Cancel</a>
+  </div>
+</form>
+{% endblock %}

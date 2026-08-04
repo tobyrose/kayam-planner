@@ -271,6 +271,27 @@ class JobService:
         return requirement
 
     def update_phase(self, job_id: int, phase_id: int, payload: dict[str, Any]) -> JobPhase:
+        phase = self._apply_phase_update(job_id, phase_id, payload)
+        self.session.commit()
+        self.session.refresh(phase)
+        return phase
+
+    def update_phases(
+        self, job_id: int, updates: list[tuple[int, dict[str, Any]]]
+    ) -> list[JobPhase]:
+        """Apply several phase edits in one transaction (job-edit "Save all phases")."""
+        self.get_job(job_id)
+        results: list[JobPhase] = []
+        for phase_id, payload in updates:
+            results.append(self._apply_phase_update(job_id, phase_id, payload))
+        self.session.commit()
+        for phase in results:
+            self.session.refresh(phase)
+        return results
+
+    def _apply_phase_update(
+        self, job_id: int, phase_id: int, payload: dict[str, Any]
+    ) -> JobPhase:
         self.get_job(job_id)
         phase = self.session.get(JobPhase, phase_id)
         if phase is None or phase.job_id != job_id:
@@ -279,8 +300,6 @@ class JobService:
         self._validate_up_within_contract(values)
         for name, value in values.items():
             setattr(phase, name, value)
-        self.session.commit()
-        self.session.refresh(phase)
         return phase
 
     def _validate_up_within_contract(self, values: dict[str, Any]) -> None:
@@ -292,22 +311,46 @@ class JobService:
         if tent is None:
             raise JobError("Tent requirement not found")
         if values["start_at"] < tent.contracted_up_at or values["end_at"] > tent.contracted_down_at:
+            from app.time_display import wall_clock_display
+
             raise JobError(
                 "Up phase must stay within the tent's contract window "
-                f"({tent.contracted_up_at:%d %b %H:%M} – {tent.contracted_down_at:%d %b %H:%M})"
+                f"({wall_clock_display(tent.contracted_up_at)} – "
+                f"{wall_clock_display(tent.contracted_down_at)})"
             )
 
     def reassign_phase_tentmaster(self, phase_id: int, tentmaster_id: int | None) -> JobPhase:
         """Move a phase to a different Tentmaster (or unassign it) without touching anything
         else — used by the season board's drag-and-drop, as distinct from `update_phase()`'s
         full-form edit. Double-booking is reported on the conflicts page, not blocked here,
-        matching the rest of the app's "planner controls, system flags" approach (D013)."""
+        matching the rest of the app's "planner controls, system flags" approach (D013).
+
+        When the dragged phase is an Up phase, every other unlocked Up phase on the same job
+        that currently shares the same Tentmaster (including both unassigned) moves with it —
+        so multi-tent jobs stay as one board block after a drag.
+        """
         phase = self.session.get(JobPhase, phase_id)
         if phase is None:
             raise JobNotFoundError("Job phase not found")
         if phase.locked:
             raise JobConflictError("Phase is locked and cannot be reassigned")
-        phase.tentmaster_id = tentmaster_id
+        siblings: list[JobPhase] = [phase]
+        if phase.phase_type == PhaseType.UP:
+            siblings = list(
+                self.session.scalars(
+                    select(JobPhase).where(
+                        JobPhase.job_id == phase.job_id,
+                        JobPhase.phase_type == PhaseType.UP,
+                        JobPhase.tentmaster_id == phase.tentmaster_id,
+                    )
+                )
+            )
+        for item in siblings:
+            if item.locked:
+                if item.id == phase.id:
+                    raise JobConflictError("Phase is locked and cannot be reassigned")
+                continue
+            item.tentmaster_id = tentmaster_id
         self.session.commit()
         self.session.refresh(phase)
         return phase

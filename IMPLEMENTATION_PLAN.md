@@ -809,7 +809,7 @@ above (or below, as they land) with full task/acceptance detail once it's underw
 | 2 | Tent/equipment BOM rework — section-sequence tents, derived poles, linked-equipment cascade | Done |
 | 3 | Season board redesign — contiguous Tentmaster blocks (not per-day flags), an unassigned/quoted lane, drop the confusing "Jobs & equipment" column | Done |
 | 4 | Loads/equipment flow diagram — a visual flow diagram of equipment movement, like the reference sheet | Done |
-| 5 | Automatic load-design/routing engine with manual override — revisits D014's original "defer full optimisation" call; this is the big one and needs its own design pass before building, not a rushed implementation. Design conversation in progress — see `LOAD_ENGINE_DESIGN.md` | Not started |
+| 5 | Automatic load-design/routing engine with manual override — V1 cut shipped 2026-08-04 (`SeasonPlanService`, button on `/loads`). Design + remaining gaps in `LOAD_ENGINE_DESIGN.md` §5. Loads Diagram UI still not built. | V1 done; diagram / refinements open |
 | 6 | Operational model redesign round — real-usage feedback on phases 3 & 4 above (see chunk list below) | Done |
 
 ---
@@ -859,6 +859,22 @@ per-chunk detail).
   existing From/To (and roster's Month/Quarter/Season) pickers are untouched and take precedence
   over `year` whenever an explicit start/end is given. 103/103 tests pass, ruff/mypy clean,
   verified live. This closes out the operational model redesign round — all 7 chunks done.
+
+---
+
+# Next session — follow-ups (parked 2026-08-04)
+
+Owner reminders / not yet implemented:
+
+1. **Ancillary kit on season loads (Q043)** — e.g. stake basher added to an early load does **not**
+   auto-track through later job→job legs or Yard return. Regen wipes unlocked auto loads.
+   Decide: lock-on-edit, carry-ancillaries-with-parent-stock, and/or job-level ancillary
+   requirements. See `OPEN_QUESTIONS.md` Q043.
+2. (Optional) Surface “this load will be replaced on regen” when editing an unlocked auto load.
+3. **Review auto crew moves** — **check what the auto crew-move generator actually does** in
+   practice (which Tentmaster legs, dates, modes, what gets wiped on regen). Confirm it matches
+   planner expectations or document/fix gaps. Code: `SeasonPlanService._generate_crew_moves`
+   in `app/services/season_plan.py`; button **Generate season loads & crew moves**.
 
 ---
 

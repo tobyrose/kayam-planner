@@ -3,8 +3,16 @@
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-3">
   <div><p class="text-uppercase text-muted small mb-1">Transport</p><h1>Loads</h1></div>
-  <div><a class="btn btn-outline-secondary" href="/loads/export.csv">Export CSV</a> <a class="btn btn-primary" href="/loads/new">New movement &amp; load</a></div>
+  <div class="d-flex flex-wrap gap-2">
+    <form method="post" action="/loads/generate-season" onsubmit="return confirm('Generate season loads and crew moves? Unlocked auto-generated plans will be replaced. Locked loads are kept.');">
+      <button class="btn btn-success" type="submit">Generate season loads &amp; crew moves</button>
+    </form>
+    <a class="btn btn-outline-secondary" href="/loads/export.csv">Export CSV</a>
+    <a class="btn btn-primary" href="/loads/new">New movement &amp; load</a>
+  </div>
 </div>
+{% if plan_message %}<div class="alert alert-success">{{ plan_message }}</div>{% endif %}
+<p class="text-muted small">Season generate: packs required <strong>sections</strong> into Flat (or Curtain) loads from earlier jobs when possible, else the Yard; times arrival after crew when Tentmasters are assigned. Also autofills crew moves between a Tentmaster’s consecutive jobs. Re-run safe for unlocked auto plans only.</p>
 <div class="table-responsive planning-section"><table class="table align-middle">
   <thead><tr><th>Load</th><th>Route</th><th>Window</th><th>Status</th><th>Capacity</th></tr></thead>
   <tbody>{% for load in loads %}<tr>
@@ -12,7 +20,7 @@
     <td>{{ load.movement.origin.name }} → {{ load.movement.destination.name }}</td>
     <td>{{ load.movement.depart_after.strftime('%d %b %H:%M') }} – {{ load.movement.arrive_by.strftime('%d %b %H:%M') }}</td>
     <td><span class="badge text-bg-secondary">{{ load.status.value|replace('_', ' ') }}</span></td>
-    <td><span class="capacity-{{ capacities[load.id].status }}">{{ capacities[load.id].status }}</span></td>
+    <td><span class="capacity-{{ capacities[load.id].status }}">{{ capacities[load.id].section_units }} pts · {{ capacities[load.id].status }}</span></td>
   </tr>{% else %}<tr><td colspan="5">No loads yet.</td></tr>{% endfor %}</tbody>
 </table></div>
 {% endblock %}

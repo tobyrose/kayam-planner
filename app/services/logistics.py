@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
@@ -52,15 +52,31 @@ class LogisticsService:
     def __init__(self, session: Session) -> None:
         self.session = session
 
+    def next_load_number(self) -> int:
+        """Next global load number (LD sequence) — max existing + 1, starting at 1."""
+        current = self.session.scalar(select(func.max(Load.load_number)))
+        return int(current or 0) + 1
+
+    def next_movement_code(self) -> str:
+        """Internal movement code — not planner-facing."""
+        count = self.session.scalar(select(func.count()).select_from(EquipmentMovement)) or 0
+        return f"MV-{int(count) + 1:04d}"
+
     def create_movement(self, payload: dict[str, Any]) -> EquipmentMovement:
-        movement = EquipmentMovement(**MovementData.model_validate(payload).model_dump())
+        data = dict(payload)
+        if not data.get("movement_code"):
+            data["movement_code"] = self.next_movement_code()
+        movement = EquipmentMovement(**MovementData.model_validate(data).model_dump())
         self.session.add(movement)
         self._commit_unique("Movement code already exists")
         self.session.refresh(movement)
         return movement
 
     def create_load(self, payload: dict[str, Any]) -> Load:
-        values = LoadData.model_validate(payload).model_dump()
+        data = dict(payload)
+        if not data.get("load_number"):
+            data["load_number"] = self.next_load_number()
+        values = LoadData.model_validate(data).model_dump()
         movement = self.session.get(EquipmentMovement, values["equipment_movement_id"])
         if movement is None:
             raise LogisticsError("Movement not found")
@@ -136,6 +152,15 @@ class LogisticsService:
         return item
 
     def capacity(self, load: Load) -> CapacityUse:
+        """Lorry fill against multi-dimensional capacities.
+
+        Primary operational measure today is *loading points* on section_capacity_units
+        (Curtain 6 / Flat 7.2, Kayam section/pole points from Q042). Status is:
+
+        - within — under 85% of the tightest measured dimension
+        - near — 85–100%
+        - over — over 100%
+        """
         used = [Decimal(0), Decimal(0), Decimal(0), Decimal(0)]
         for item in load.items:
             equipment_type = item.resolved_type

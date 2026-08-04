@@ -1,14 +1,61 @@
-  <div class="milestone-strip mb-4">{% if job.site_access_at %}<span><strong>Access</strong> {{ job.site_access_at.strftime('%d %b %H:%M') }}</span>{% endif %}{% if job.site_clear_by %}<span><strong>Clear</strong> {{ job.site_clear_by.strftime('%d %b %H:%M') }}</span>{% endif %}</div>
-  <section id="tent-requirements" class="planning-section"><h2 class="h4">Tent requirements</h2>
-    <div class="table-responsive"><table class="table table-sm"><thead><tr><th>Label</th><th>Sequence</th><th>Contract Up</th><th>Contract Down</th></tr></thead><tbody>{% for requirement in job.tent_requirements %}<tr><td>{{ requirement.custom_name or '—' }}</td><td>{{ requirement.sequence_code }}</td><td>{{ requirement.contracted_up_at.strftime('%d %b %H:%M') }}</td><td>{{ requirement.contracted_down_at.strftime('%d %b %H:%M') }}</td></tr>{% else %}<tr><td colspan="4" class="text-secondary">No tent requirements.</td></tr>{% endfor %}</tbody></table></div>
+  <div class="milestone-strip mb-4">{% if job.site_access_at %}<span><strong>Access</strong> {{ job.site_access_at|wall_clock }}</span>{% endif %}{% if job.site_clear_by %}<span><strong>Clear</strong> {{ job.site_clear_by|wall_clock }}</span>{% endif %}</div>
+  <section id="job-loads" class="planning-section">
+    <h2 class="h4">Loads</h2>
+    <p class="text-muted small mb-2">Lorries arriving at / leaving this site for the job window (including early job→job staging and returns to Yard).</p>
+    {% if inbound_loads is defined and inbound_loads %}
+    <h3 class="h6 text-uppercase text-secondary mb-1">Arriving ↓</h3>
+    <div class="table-responsive mb-3">
+      <table class="table table-sm align-middle mb-0">
+        <thead><tr><th>Load</th><th>From</th><th>Depart</th><th>Arrive</th><th>Vehicle</th><th>Contents</th></tr></thead>
+        <tbody>
+        {% for load in inbound_loads %}
+          <tr>
+            <td><a href="{{ load.href }}"><strong>{{ load.label }}</strong></a>{% if load.locked %} 🔒{% endif %}</td>
+            <td>{{ load.origin }}</td>
+            <td class="text-nowrap small">{{ load.depart_after|wall_clock }}</td>
+            <td class="text-nowrap small">{{ load.arrive_by|wall_clock }}</td>
+            <td class="small">{{ load.vehicle }}</td>
+            <td class="small">{{ load.contents }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+    {% if outbound_loads is defined and outbound_loads %}
+    <h3 class="h6 text-uppercase text-secondary mb-1">Leaving ↑</h3>
+    <div class="table-responsive mb-2">
+      <table class="table table-sm align-middle mb-0">
+        <thead><tr><th>Load</th><th>To</th><th>Depart</th><th>Arrive</th><th>Vehicle</th><th>Contents</th></tr></thead>
+        <tbody>
+        {% for load in outbound_loads %}
+          <tr>
+            <td><a href="{{ load.href }}"><strong>{{ load.label }}</strong></a>{% if load.locked %} 🔒{% endif %}</td>
+            <td>{{ load.destination }}</td>
+            <td class="text-nowrap small">{{ load.depart_after|wall_clock }}</td>
+            <td class="text-nowrap small">{{ load.arrive_by|wall_clock }}</td>
+            <td class="small">{{ load.vehicle }}</td>
+            <td class="small">{{ load.contents }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+    {% if (inbound_loads is not defined or not inbound_loads) and (outbound_loads is not defined or not outbound_loads) %}
+    <p class="text-secondary small mb-0">No loads matched to this job yet — run <strong>Generate season loads</strong> or create movements manually.</p>
+    {% endif %}
   </section>
-  <section class="planning-section"><h2 class="h4" id="loading-list">Loading list</h2><p class="text-muted small mb-2">Sections and derived poles — the big items that actually appear on the loading diagram.</p><div class="table-responsive"><table class="table table-sm"><thead><tr><th>Equipment type</th><th>Quantity</th><th>Stage</th><th>Required</th><th>Status</th><th>Source</th></tr></thead><tbody>{% for requirement in job.equipment_requirements if requirement.equipment_type.category in ("section", "pole") %}<tr><td>{{ requirement.equipment_type.code }}</td><td>{{ requirement.quantity_required }}</td><td>{{ requirement.required_stage.value|replace('_',' ') }}</td><td>{{ requirement.required_on_site_at.strftime('%d %b %H:%M') }}</td><td>{{ requirement.status.value|replace('_',' ') }}</td><td>{{ requirement.source.value }}</td></tr>{% else %}<tr><td colspan="6" class="text-secondary">No tent requirement yet.</td></tr>{% endfor %}</tbody></table></div>
+  <section id="tent-requirements" class="planning-section"><h2 class="h4">Tent requirements</h2>
+    <div class="table-responsive"><table class="table table-sm"><thead><tr><th>Label</th><th>Sequence</th><th>Contract Up</th><th>Contract Down</th></tr></thead><tbody>{% for requirement in job.tent_requirements %}<tr><td>{{ requirement.custom_name or '—' }}</td><td>{{ requirement.sequence_code }}</td><td>{{ requirement.contracted_up_at|wall_clock }}</td><td>{{ requirement.contracted_down_at|wall_clock }}</td></tr>{% else %}<tr><td colspan="4" class="text-secondary">No tent requirements.</td></tr>{% endfor %}</tbody></table></div>
+  </section>
+  <section class="planning-section"><h2 class="h4" id="loading-list">Loading list</h2><p class="text-muted small mb-2">Sections and derived poles — the big items that actually appear on the loading diagram.</p><div class="table-responsive"><table class="table table-sm"><thead><tr><th>Equipment type</th><th>Quantity</th><th>Stage</th><th>Required</th><th>Status</th><th>Source</th></tr></thead><tbody>{% for requirement in job.equipment_requirements if requirement.equipment_type.category in ("section", "pole") %}<tr><td>{{ requirement.equipment_type.code }}</td><td>{{ requirement.quantity_required }}</td><td>{{ requirement.required_stage.value|replace('_',' ') }}</td><td>{{ requirement.required_on_site_at|wall_clock }}</td><td>{{ requirement.status.value|replace('_',' ') }}</td><td>{{ requirement.source.value }}</td></tr>{% else %}<tr><td colspan="6" class="text-secondary">No tent requirement yet.</td></tr>{% endfor %}</tbody></table></div>
     <details class="mt-2"><summary class="text-muted">Detailed view — linked equipment (not shown on the loading diagram)</summary><div class="table-responsive mt-2"><table class="table table-sm"><thead><tr><th>Equipment type</th><th>Quantity</th><th>Stage</th><th>Status</th><th>Source</th></tr></thead><tbody>{% for requirement in job.equipment_requirements if requirement.equipment_type.category not in ("section", "pole") %}<tr><td>{{ requirement.equipment_type.code }} · {{ requirement.equipment_type.name }}</td><td>{{ requirement.quantity_required }}</td><td>{{ requirement.required_stage.value|replace('_',' ') }}</td><td>{{ requirement.status.value|replace('_',' ') }}</td><td>{{ requirement.source.value }}</td></tr>{% else %}<tr><td colspan="5" class="text-secondary">No linked equipment configured yet.</td></tr>{% endfor %}</tbody></table></div></details>
   </section>
   <section id="equipment-assignments" class="planning-section"><h2 class="h4">Physical equipment assignments</h2><div class="table-responsive"><table class="table table-sm"><thead><tr><th>Requirement</th><th>Assigned assets</th><th>Strength</th><th>Lock</th></tr></thead><tbody>{% for requirement in job.equipment_requirements %}{% if requirement.assignments %}{% for assignment in requirement.assignments %}<tr><td>{{ requirement.equipment_type.code }}</td><td><a href="/equipment/{{ assignment.equipment_asset_id }}">{{ assignment.equipment_asset.asset_code }}</a></td><td>{{ assignment.allocation_strength.value }}</td><td>{% if assignment.locked %}🔒 Locked{% else %}Open{% endif %}</td></tr>{% endfor %}{% else %}<tr><td>{{ requirement.equipment_type.code }} × {{ requirement.quantity_required }}</td><td colspan="3" class="text-secondary">Unassigned</td></tr>{% endif %}{% endfor %}</tbody></table></div></section>
   <section id="phases" class="planning-section"><h2 class="h4">Operational phases and crew</h2>
-    <div class="table-responsive"><table class="table table-sm"><thead><tr><th>Phase</th><th>Tent</th><th>Tentmaster</th><th>Start</th><th>End</th><th>Crew</th></tr></thead><tbody>{% for phase in job.phases|sort(attribute='start_at') %}{% set counts = phase_headcounts[phase.id] %}<tr><td>{{ phase.phase_type.value|replace('_',' ')|title }}{% if phase.locked %} 🔒{% endif %}</td><td>{% if phase.tent_requirement %}{{ phase.tent_requirement.custom_name or phase.tent_requirement.sequence_code }}{% else %}—{% endif %}</td><td>{{ phase.tentmaster.name if phase.tentmaster else '—' }}</td><td>{{ phase.start_at.strftime('%d %b %H:%M') }}</td><td>{{ phase.end_at.strftime('%d %b %H:%M') }}</td><td>{{ counts.assigned }}/{{ counts.required }}{% if counts.shortfall %} · <span class="text-danger">short {{ counts.shortfall }}</span>{% endif %}{% if counts.names %} · {{ counts.names|join(', ') }}{% endif %}</td></tr>{% else %}<tr><td colspan="6" class="text-secondary">No phases.</td></tr>{% endfor %}</tbody></table></div>
+    <div class="table-responsive"><table class="table table-sm"><thead><tr><th>Phase</th><th>Tent</th><th>Tentmaster</th><th>Start</th><th>End</th><th>Crew</th></tr></thead><tbody>{% for phase in job.phases|sort(attribute='start_at') %}{% set counts = phase_headcounts[phase.id] %}<tr><td>{{ phase.phase_type.value|replace('_',' ')|title }}{% if phase.locked %} 🔒{% endif %}</td><td>{% if phase.tent_requirement %}{{ phase.tent_requirement.custom_name or phase.tent_requirement.sequence_code }}{% else %}—{% endif %}</td><td>{{ phase.tentmaster.name if phase.tentmaster else '—' }}</td><td>{{ phase.start_at|wall_clock }}</td><td>{{ phase.end_at|wall_clock }}</td><td>{{ counts.assigned }}/{{ counts.required }}{% if counts.shortfall %} · <span class="text-danger">short {{ counts.shortfall }}</span>{% endif %}{% if counts.names %} · {{ counts.names|join(', ') }}{% endif %}</td></tr>{% else %}<tr><td colspan="6" class="text-secondary">No phases.</td></tr>{% endfor %}</tbody></table></div>
   </section>
   <section id="local-crew" class="planning-section"><h2 class="h4">Local crew</h2><p class="text-muted small">Anonymous local/hired headcount booked onto the site between two dates — joins whichever phase(s) are active over that window and counts toward each one's total.</p>
-    <div class="table-responsive"><table class="table table-sm"><thead><tr><th>Headcount</th><th>From</th><th>To</th><th>Notes</th></tr></thead><tbody>{% for booking in job.local_crew_bookings|sort(attribute='start_at') %}<tr><td>{{ booking.headcount }}</td><td>{{ booking.start_at.strftime('%d %b %H:%M') }}</td><td>{{ booking.end_at.strftime('%d %b %H:%M') }}</td><td>{{ booking.notes or '' }}</td></tr>{% else %}<tr><td colspan="4" class="text-secondary">No local crew booked.</td></tr>{% endfor %}</tbody></table></div>
+    <div class="table-responsive"><table class="table table-sm"><thead><tr><th>Headcount</th><th>From</th><th>To</th><th>Notes</th></tr></thead><tbody>{% for booking in job.local_crew_bookings|sort(attribute='start_at') %}<tr><td>{{ booking.headcount }}</td><td>{{ booking.start_at|wall_clock }}</td><td>{{ booking.end_at|wall_clock }}</td><td>{{ booking.notes or '' }}</td></tr>{% else %}<tr><td colspan="4" class="text-secondary">No local crew booked.</td></tr>{% endfor %}</tbody></table></div>
   </section>

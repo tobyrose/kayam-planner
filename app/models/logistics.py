@@ -127,7 +127,8 @@ class Load(Base):
 
     @property
     def display_code(self) -> str:
-        return f"{self.movement.movement_code}-LD{self.load_number}"
+        """Planner-facing load label — simple L-number (e.g. L1), not movement codes."""
+        return f"L{self.load_number}"
 
 
 class LoadItem(Base):

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from sqlalchemy import select
 
-from app.commands.seed import _ensure_linked_parts
+from app.commands.seed import _ensure_linked_parts, _ensure_loading_points
 from app.database import SessionLocal
 from app.models.administration import EquipmentType
 
@@ -26,8 +26,12 @@ def main() -> None:
         if "K" not in equipment_types:
             raise RuntimeError("No equipment taxonomy found — seed administration data first")
         created = _ensure_linked_parts(session, equipment_types)
+        points_updated = _ensure_loading_points(session)
         session.commit()
-    print(f"Equipment taxonomy sync complete: {created} new records.")
+    print(
+        f"Equipment taxonomy sync complete: {created} new records, "
+        f"{points_updated} loading-point updates."
+    )
 
 
 if __name__ == "__main__":

@@ -46,9 +46,10 @@ K-M-M-M-K), not a size template. The real equipment taxonomy is now seeded: Kaya
 SC ends/middles/triangles/covers, P king pole pairs) and Valhalla (V, VOE, VNE, plus X poles —
 family assignment for X is unconfirmed, see Q041). See D030.
 
-**Remaining gap:** Valhalla's pole formula and pole equipment type are not configured
-(`TentFamily.pole_equipment_type_id` is null for Valhalla) — booking a Valhalla sequence currently
-derives no poles at all until this is set via `/admin/tent-families`.
+**Remaining gap:** Valhalla poles are not tracked as named assets and are not derived via the
+Kayam-style family pole formula. Owner direction (2026-08-04, Q040): treat them as untracked
+linked quantity — e.g. 1 Valhalla pole per Valhalla End (VOE/VNE) and 2 per Valhalla Middle (V) —
+so they show for truck loading only. Not configured in the DB yet.
 
 ---
 
@@ -142,17 +143,18 @@ derived pole count from a section sequence is divided by `pack_size` to get the 
 
 ## Q011 — What are the crew pay rules?
 
-**Status:** Open  
+**Status:** Deferred (owner 2026-08-04: skip costing for now)  
 **Needed by:** Production labour costing  
 **Question:** Confirm hourly rate, overtime, travel pay, daily allowance and any minimum-day rules.
 
-**Current assumption:** Configurable simple rates with manual adjustments; no payroll.
+**Current assumption:** Configurable simple rates with manual adjustments; no payroll. Costing UI
+and rules exist as a V1 baseline but are not a current priority.
 
 ---
 
 ## Q012 — How should travel cost be allocated between jobs?
 
-**Status:** Open  
+**Status:** Deferred (owner 2026-08-04: skip costing for now)  
 **Needed by:** Job margin  
 **Question:** Does a move from Job A to Job B belong to A, B, both, or a seasonal overhead budget?
 
@@ -243,7 +245,7 @@ mechanism designed from scratch, not "explicit maintenance phases."
 
 ## Q020 — What are the true lorry cost rules?
 
-**Status:** Open  
+**Status:** Deferred (owner 2026-08-04: skip costing for now)  
 **Needed by:** Transport estimates  
 **Question:** Are prices based on route, mileage, minimum charge, number of days, ferry, waiting or negotiated quote?
 
@@ -253,7 +255,7 @@ mechanism designed from scratch, not "explicit maintenance phases."
 
 ## Q021 — Is VAT required for invoice tracking?
 
-**Status:** Open  
+**Status:** Deferred (owner 2026-08-04: skip costing for now)  
 **Needed by:** Supplier invoice feature  
 **Question:** Should amounts be stored net, gross or both?
 
@@ -433,9 +435,9 @@ the planner. Define an encrypted automated retention policy before hosted deploy
 
 ---
 
-## Q038 — What quantity of side poles and anchor stillages does a Kayam 20M Middle need? — LARGELY RESOLVED
+## Q038 — What quantity of side poles and anchor stillages does a Kayam 20M Middle need? — RESOLVED
 
-**Status:** Resolved for side poles (D038 sync, 2026-08-03) — anchor stillages still open  
+**Status:** Resolved  
 **Needed by:** Accurate loading lists (D030)  
 **Question:** An M implies some quantity of side poles and anchor stillages, per the owner, but no
 exact numbers were given (only that an M implies exactly 2 bale rings, which is configured).
@@ -445,10 +447,9 @@ complete side-pole count per section: K=30, m=12, M=16, T=3, SC=1, s=18 — conf
 `app.commands.seed.LINKED_PARTS_MATRIX` and applied to `instance/kayam.db` with
 `kayam-sync-equipment-taxonomy`.
 
-**Still open (anchor stillages):** Not present anywhere in `kay.parts.csv` — no row named
-"stillage." `EquipmentType.ANCHOR_STILLAGE` remains seeded with zero configured links. Add the
-correct quantity via `/admin/equipment-links` once known, or confirm it isn't actually a
-per-section item (e.g. a shared/pooled item not counted per M).
+**Resolution (anchor stillages):** Dropped (owner, 2026-08-04) — do not model anchor stillages as
+per-section linked equipment. `EquipmentType.ANCHOR_STILLAGE` may remain in the catalogue unused;
+no further work required.
 
 ---
 
@@ -475,50 +476,53 @@ should confirm whether `SIDE_GUY`/`TIFOR_1_5T` should be deactivated in favour o
 
 ---
 
-## Q040 — What is Valhalla's pole formula and pole equipment type?
+## Q040 — What is Valhalla's pole formula and pole equipment type? — RESOLVED (direction)
 
-**Status:** Open  
-**Needed by:** Valhalla job bookings (D030)  
+**Status:** Resolved as product direction (2026-08-04) — not yet configured in seed/DB  
+**Needed by:** Valhalla job bookings / truck loading lists (D030, load engine)  
 **Question:** Kayam's formula (poles = sections×2−2, fulfilled by the King Pole pair type) was
 confirmed by the owner. Valhalla's equivalent — including whether it uses the same formula, and
 which equipment type (X Poles? something else?) fulfils it — was not.
 
-**Current assumption:** `TentFamily.pole_equipment_type_id` is left null for Valhalla, so booking
-a Valhalla sequence currently derives zero poles. Configure via `/admin/tent-families` once known.
+**Resolution:** Valhalla poles **are not tracked as named assets**. They still "go in the trucks"
+and should appear as quantity for loading, not as individual stock codes. Owner direction:
 
-**New lead (2026-08-03, see Q042):** The owner gave three worked *lorry-loading* examples (not a
-pole-count formula, but adjacent): 6-pole `VOE-V-V-VOE` = 3 flatbeds; 12-pole
-`VOE-V-V-V-V-V-VOE` = 5 flatbeds; going from 6-pole to 10-pole by adding `V-V` needs 2 more
-flatbeds. Still doesn't answer Q040 directly (poles aren't named/counted separately for Valhalla
-at all — "we don't list out Poles etc separately, only VOE/VNE/V") — recorded in full at Q042.
+- Do **not** wire `TentFamily.pole_equipment_type_id` / Kayam-style derived-pole formula for
+  Valhalla.
+- Prefer linked components: e.g. **1 Valhalla pole per Valhalla End (VOE/VNE)** and **2 Valhalla
+  poles per Valhalla Middle (V)** — exact type code/name still to choose when configured.
+- Until that link is added, booking a Valhalla sequence correctly derives no named poles (by
+  design, not a bug).
+
+**Also (lorry packing, not pole formula — see Q042):** whole-tent flatbed examples remain the
+capacity model for Valhalla (6-pole = 3 flatbeds, etc.), separate from this linked-pole quantity.
 
 ---
 
 ## Q041 — When is "X Poles" used instead of the Kayam King Pole?
 
-**Status:** Open  
-**Needed by:** Q040, pole requirement accuracy  
+**Status:** Open (less urgent after Q040)  
+**Needed by:** Pole requirement accuracy if X appears on real loads  
 **Question:** X Poles (pair) was listed by the owner alongside the Kayam King Pole as a distinct
 pole type, with no stated tent family or usage rule.
 
 **Current assumption:** Seeded with no `tent_family_id` (family-agnostic) and not wired as any
-family's derived pole type. Likely relevant to Q040 (may be Valhalla's pole type, or a shared
-spare/alternate pole type used across families) — needs the owner's input to resolve either way.
+family's derived pole type. Q040 clarifies Valhalla poles are a separate untracked linked
+quantity — **X is not the Valhalla pole answer**. Leave X as a catalogue type until a real usage
+rule is needed; do not invent one.
 
 ---
 
-## Q042 — Lorry-loading capacity data (owner-supplied 2026-08-03) — not yet implemented
+## Q042 — Lorry-loading capacity data (owner-supplied 2026-08-03) — recorded, not yet implemented
 
-**Status:** Confirmed input data, recorded for the automatic load-design/routing engine
-(top-roadmap item 5, D014) — not implemented anywhere yet, not a schema change, not a decision.
-Recording here so it isn't lost before that design conversation happens. The full design
-conversation (loads diagram + routing engine requirements) is now written up in full in
-`LOAD_ENGINE_DESIGN.md` — this entry stays as the capacity-data reference it links back to.
+**Status:** Confirmed input data (re-confirmed by owner 2026-08-04) — recorded for the automatic
+load-design/routing engine (top-roadmap item 5, D014). Not implemented in capacity calculations
+yet; not a schema change. Also referenced from `LOAD_ENGINE_DESIGN.md`.
 
-**Vehicle capacity:**
+**Vehicle capacity (confirmed):**
 
-- Curtainsider: 6 points
-- Flatbed: 7.2 points
+- Curtainsider: **6 points**
+- Flatbed: **7.2 points**
 
 **Points per Kayam-family section/pole type** (owner-supplied, applies to sections/poles only —
 not the linked parts in `kay.parts.csv`/Q038/Q039, which are a separate, much smaller-unit system):
@@ -559,3 +563,63 @@ owner's sign-off; get more worked examples first if possible.
 section/pole/ancillary *unit counts* and weight, not a points system — this is a different,
 finer-grained model that would need reconciling with (or replacing) §8.9 once the load-design
 engine's actual design is agreed.
+
+---
+
+## Q043 — Do manual ancillary items (e.g. stake basher) auto-track through the season with the kit?
+
+**Status:** Open — **behaviour confirmed for next session** (owner asked 2026-08-04)  
+**Needed by:** Season load generator V2 / load-edit UX  
+**Question:** If a planner adds something like a stake basher (or other ancillary) onto an early
+load, should later job→job legs and the final return-to-Yard automatically carry that item, or
+must it be managed load-by-load?
+
+**Current behaviour (V1 — do not treat as a bug):**
+
+- Season generate only auto-packs **sections + poles** (quantity-by-type free pool). Linked kit is
+  implied on the load sheet, not packed as separate trailer lines; ancillaries (stake basher,
+  rock drill, crew tent, etc.) are **not** in the free-pool chain.
+- Adding an ancillary to load L*n* keeps it on **that load only**.
+- **Generate season loads** again **deletes unlocked** auto movements/loads and recreates them —
+  manual lines on unlocked auto loads are **wiped** unless the load (or movement) is **locked**.
+- Job→job and Yard-return legs therefore do **not** auto-inherit a stake basher from an earlier
+  load.
+
+**Workarounds today:** lock the load(s) you hand-edited; re-add after regen; or add the item on
+each leg that should carry it.
+
+**Candidate product options for a later session (not decided):**
+
+1. **Lock-on-edit** — touching an auto load auto-locks it (or prompts) so regen preserves it.
+2. **Carry ancillaries with parent stock** — when regenerating, any non-section/pole items on a
+   donor leg are re-attached to the next outbound leg(s) that take that kit (and eventually
+   Yard-return).
+3. **Job-level ancillary requirements** — planner lists stake bashers etc. on the job; generate
+   packs them onto inbound/outbound like sections.
+
+**Decision:** none yet — pick an option (or hybrid) with the owner before implementing.
+
+**Notes for next session:** Owner wants this remembered; season board job side panel now shows
+inbound/outbound loads (contents + dates) which makes the gap more visible.
+
+---
+
+## Q044 — What does auto crew-move generation actually do, and is it correct?
+
+**Status:** Open — **check next session** (owner request 2026-08-04)  
+**Needed by:** Confidence in “Generate season loads & crew moves”  
+**Question:** Does the auto crew-move path produce the right Tentmaster travel (between which
+jobs/phases, when, which mode), and what does regen do to existing crew moves?
+
+**Where to look:**
+
+- `SeasonPlanService._generate_crew_moves` / `generate(include_crew_moves=True)` in
+  `app/services/season_plan.py`
+- Clears unlocked auto crew moves (notes marker) then recreates
+- UI: **Generate season loads & crew moves** on `/loads`
+
+**Current assumption (from V1 design, verify against real data):** consecutive Tentmaster phase
+visits at different sites get a planned crew move; locked/non-auto moves kept.
+
+**Next session task:** Run generate on live season data, inspect created crew moves on the board /
+crew UI, and either confirm behaviour or list concrete fixes.

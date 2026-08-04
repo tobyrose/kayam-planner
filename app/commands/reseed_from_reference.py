@@ -12,11 +12,12 @@ from `reference/kay_seed_jobs.csv` or an earlier reseed run, since only the rese
 venue Locations.
 
 Reseeded: one `EquipmentAsset` per line in `reference/kay_seed_stock.txt`, mapped onto the
-existing taxonomy by code prefix; one `Job` + `JobTentRequirement` per row in
-`reference/kay_seed_jobs.csv`, plus one `Location` per distinct venue (two tents at the same real
-venue, e.g. both SOLIDAYS rows at Longchamp, share a single `Location` row). Every job lands with
-no Tentmaster on any phase (Unassigned/Quoted) — deliberately, so allocation can be tried from a
-clean slate. No loads or equipment assignments are seeded.
+existing taxonomy by code prefix; one `Job` per distinct JOB name in
+`reference/kay_seed_jobs.csv` (multiple CSV rows with the same name are extra tents on that job —
+e.g. both SOLIDAYS rows → one SOLIDAYS job with two tent requirements), plus one `Location` per
+distinct venue. Every job lands with no Tentmaster on any phase (Unassigned/Quoted) —
+deliberately, so allocation can be tried from a clean slate. No loads or equipment assignments
+are seeded.
 """
 
 from __future__ import annotations
@@ -150,8 +151,9 @@ def reseed_stock(session: Session, yard: Location) -> int:
 
 
 def reseed_jobs(session: Session) -> int:
+    """One Job per distinct JOB name; extra CSV rows with the same name add more tents."""
     job_service = JobService(session)
-    seen_codes: dict[str, int] = {}
+    jobs_by_slug: dict[str, Job] = {}
     locations_by_venue: dict[str, Location] = {}
     warnings: list[str] = []
     created = 0
@@ -159,13 +161,10 @@ def reseed_jobs(session: Session) -> int:
         for row in csv.DictReader(handle):
             name = row["JOB"].strip()
             slug = re.sub(r"[^A-Z0-9]+", "-", name.upper()).strip("-")
-            seen_codes[slug] = seen_codes.get(slug, 0) + 1
-            job_code = slug if seen_codes[slug] == 1 else f"{slug}-{seen_codes[slug]}"
 
             address = row["SITE ADDRESS"].strip()
             venue = address.split(",")[0].strip()
-            # Two tents at the same real venue (e.g. both SOLIDAYS rows at Longchamp) share one
-            # Location row rather than tripping the name-uniqueness constraint with a duplicate.
+            # Same venue address segment → shared Location (e.g. both SOLIDAYS tents at Longchamp).
             location = locations_by_venue.get(venue)
             if location is None:
                 country_code, timezone = _country_and_timezone(address)
@@ -184,17 +183,25 @@ def reseed_jobs(session: Session) -> int:
                 session.flush()
                 locations_by_venue[venue] = location
 
-            job = Job(
-                job_code=job_code,
-                name=name,
-                customer_name="TBC",
-                location_id=location.id,
-                commercial_status=CommercialStatus.QUOTED,
-                planning_status=PlanningStatus.NOT_PLANNED,
-            )
-            session.add(job)
-            session.flush()
-            created += 1
+            job = jobs_by_slug.get(slug)
+            if job is None:
+                job = Job(
+                    job_code=slug,
+                    name=name,
+                    customer_name="TBC",
+                    location_id=location.id,
+                    commercial_status=CommercialStatus.QUOTED,
+                    planning_status=PlanningStatus.NOT_PLANNED,
+                )
+                session.add(job)
+                session.flush()
+                jobs_by_slug[slug] = job
+                created += 1
+            elif job.location_id != location.id:
+                warnings.append(
+                    f"{slug}: CSV row points at a different venue than the first row for this "
+                    f"job name — tent still added on job {slug} at location id {job.location_id}."
+                )
 
             try:
                 up_at = _parse_datetime(row["Up"])
@@ -220,8 +227,7 @@ def reseed_jobs(session: Session) -> int:
                 # validation) — the job/location already flushed above are still good to keep.
                 session.commit()
                 warnings.append(
-                    f"{job_code}: {error} — job created with no tent; add one manually once "
-                    "the source data is corrected."
+                    f"{slug}: {error} — tent not added; fix the source CSV row and re-run."
                 )
     if warnings:
         print("WARNINGS (jobs created but need manual attention):")

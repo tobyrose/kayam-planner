@@ -1,28 +1,218 @@
-{% extends "base.html" %}{% block title %}Flow diagram · Kayam Planner{% endblock %}{% block content %}
-<div class="d-flex flex-wrap justify-content-between align-items-end gap-3 mb-3"><div><p class="text-uppercase text-muted small mb-1">Equipment on the move</p><h1>Loads &amp; equipment flow diagram</h1><p class="text-muted mb-0">Locations run across the top, dates run down the side, like the loading sheet — lines show a load's journey between locations on the date it travels.</p></div><div class="d-flex flex-wrap gap-3 align-items-end"><form class="row g-2 align-items-end"><div class="col-auto"><label class="form-label" for="flow-year">Year</label><select class="form-select" id="flow-year" name="year" onchange="this.form.submit()">{% for y in range(current_year - 1, current_year + 4) %}<option value="{{ y }}" {% if y == flow.start.year %}selected{% endif %}>{{ y }}</option>{% endfor %}</select></div></form><form class="row g-2 align-items-end"><div class="col-auto"><label class="form-label">From</label><input class="form-control" type="date" name="start" value="{{ flow.start }}"></div><div class="col-auto"><label class="form-label">To</label><input class="form-control" type="date" name="end" value="{{ flow.end }}"></div><div class="col-auto"><button class="btn btn-primary">Load range</button></div></form></div></div>
-<div class="board-toolbar planning-section d-flex flex-wrap gap-2 align-items-center"><label for="board-filter" class="visually-hidden">Filter board</label><input id="board-filter" class="form-control form-control-sm" placeholder="Filter job or location"><button class="btn btn-sm btn-outline-secondary board-zoom" data-zoom="compact">Compact</button><button class="btn btn-sm btn-outline-secondary board-zoom" data-zoom="comfortable">Comfortable</button><span class="ms-auto small"><span class="legend confirmed"></span> confirmed <span class="legend provisional"></span> provisional</span></div>
-{% if not flow.nodes %}
-<p class="text-muted">No jobs or loads scheduled in this date range.</p>
+{% extends "base.html" %}
+{% block title %}Loads diagram · Kayam Planner{% endblock %}
+{% block main_class %}container-fluid planning-page py-3{% endblock %}
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-end gap-3 mb-3">
+  <div>
+    <p class="text-uppercase text-muted small mb-1">How kit moves</p>
+    <h1 class="h2 mb-1">Loads diagram</h1>
+    <p class="text-muted small mb-0">
+      Continuous job blocks (Build→Break). <strong>Darker band = contract Up</strong>.
+      <strong>Top of day = arrivals</strong>, <strong>bottom = departures</strong>.
+      Convoy loads share one arrow (e.g. L7–L9). Click Yard / L# for details.
+    </p>
+  </div>
+  <div class="d-flex flex-wrap gap-2 align-items-end">
+    <form class="row g-2 align-items-end">
+      <div class="col-auto">
+        <label class="form-label form-label-sm mb-0" for="flow-year">Year</label>
+        <select class="form-select form-select-sm" id="flow-year" name="year" onchange="this.form.submit()">
+          {% for y in range(current_year - 1, current_year + 4) %}
+          <option value="{{ y }}" {% if y == flow.start.year %}selected{% endif %}>{{ y }}</option>
+          {% endfor %}
+        </select>
+      </div>
+    </form>
+    <form class="row g-2 align-items-end">
+      <div class="col-auto">
+        <label class="form-label form-label-sm mb-0">From</label>
+        <input class="form-control form-control-sm" type="date" name="start" value="{{ flow.start }}">
+      </div>
+      <div class="col-auto">
+        <label class="form-label form-label-sm mb-0">To</label>
+        <input class="form-control form-control-sm" type="date" name="end" value="{{ flow.end }}">
+      </div>
+      <div class="col-auto"><button class="btn btn-sm btn-primary">Load range</button></div>
+    </form>
+  </div>
+</div>
+
+<div class="board-toolbar d-flex flex-wrap gap-2 align-items-center mb-2">
+  <label for="board-filter" class="visually-hidden">Filter</label>
+  <input id="board-filter" class="form-control form-control-sm" placeholder="Filter job, load or code" style="max-width:18rem;">
+  <span class="ms-auto small text-muted">
+    <span class="flow-legend-build"></span> Build/Break
+    <span class="flow-legend-up ms-2"></span> Contract Up
+  </span>
+</div>
+
+{% if not flow.columns %}
+<p class="text-muted">No jobs or loads in this date range.</p>
 {% else %}
-<div class="season-board-wrap flow-board-wrap" tabindex="0" aria-label="Loads and equipment flow diagram">
-  <div class="flow-board-inner" style="position:relative; width:{{ flow.width }}px; height:{{ flow.height + 34 }}px;">
-    <table class="season-board flow-board" id="season-board" style="table-layout:fixed; width:{{ flow.width }}px;">
-      <colgroup><col style="width:{{ flow.label_width }}px;">{% for node in flow.nodes %}<col style="width:{{ flow.lane_width }}px;">{% endfor %}</colgroup>
-      <thead><tr><th class="sticky-date">Date</th>{% for node in flow.nodes %}<th>{{ node.name }}</th>{% endfor %}</tr></thead>
+{% set yard_col = flow.columns | selectattr('kind', 'equalto', 'yard') | first %}
+<div class="season-board-wrap flow-board-wrap" tabindex="0" aria-label="Loads diagram"
+     id="loads-diagram"
+     data-yard-stock='{{ flow.yard_stock_by_day | tojson }}'
+     data-row-height="{{ flow.row_height }}"
+     data-header-height="{{ flow.header_height }}"
+     data-job-head="{{ flow.job_head_height }}">
+  <div class="flow-board-inner" style="position:relative; width:{{ flow.width }}px; min-height:{{ flow.height }}px;">
+    <table class="season-board flow-board loads-diagram" id="season-board" style="table-layout:fixed; width:{{ flow.width }}px;">
+      <colgroup>
+        <col style="width:{{ flow.label_width }}px;">
+        {% for column in flow.columns %}
+        <col style="width:{{ column.width }}px;">
+        {% endfor %}
+      </colgroup>
+      <thead>
+        <tr style="height:{{ flow.header_height }}px;">
+          <th class="sticky-date">Date</th>
+          {% for column in flow.columns %}
+          <th class="flow-col-{{ column.kind }}">{% if column.kind == 'yard' %}Yard{% endif %}</th>
+          {% endfor %}
+        </tr>
+      </thead>
       <tbody>
         {% for day in flow.days %}
-        <tr style="height:{{ flow.row_height }}px;">
-          <th class="sticky-date" style="height:{{ flow.row_height }}px;"><time datetime="{{ day.day }}">{{ day.day.strftime('%a') }}<strong>{{ day.day.strftime('%d %b') }}</strong></time></th>
-          {% for node in flow.nodes %}<td class="lane-cell" style="height:{{ flow.row_height }}px; overflow:hidden;">{% for block in day.cells.get(node.location_id, []) %}<a class="season-block seg-{{ block.segment }} job status-{{ block.status }}" href="{{ block.href }}" data-search="{{ block.label }} {{ block.subtitle }}" data-job="{{ block.job_id }}"><strong>{{ block.label }}</strong><small>{{ block.subtitle }}</small></a>{% endfor %}</td>{% endfor %}
+        <tr data-day="{{ day.day }}" style="height:{{ flow.row_height }}px;">
+          <th class="sticky-date">
+            <time datetime="{{ day.day }}">
+              <span class="day-dow">{{ day.day.strftime('%a') }}</span>
+              <strong class="day-dom">{{ day.day.strftime('%d %b') }}</strong>
+            </time>
+          </th>
+          {% for column in flow.columns %}
+          {% if column.kind == 'yard' %}
+          <td class="lane-cell flow-cell kind-yard yard-day-cell"
+              data-yard-day="{{ day.day }}"
+              role="button"
+              tabindex="0"
+              title="Yard stock on {{ day.day }}"></td>
+          {% else %}
+          <td class="lane-cell flow-cell kind-job"></td>
+          {% endif %}
+          {% endfor %}
         </tr>
         {% endfor %}
       </tbody>
     </table>
-    <svg class="flow-edges" id="flow-edges" style="top:34px; left:0; width:{{ flow.width }}px; height:{{ flow.height }}px;" viewBox="0 0 {{ flow.width }} {{ flow.height }}">
-      <defs><marker id="flow-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#5b615b"></path></marker></defs>
-      {% for edge in flow.edges %}<a class="flow-edge status-{{ edge.status }}" href="{{ edge.href }}" data-label="{{ edge.label }}" data-subtitle="{{ edge.subtitle }}"><line x1="{{ edge.x1 }}" y1="{{ edge.y1 }}" x2="{{ edge.x2 }}" y2="{{ edge.y2 }}" marker-end="url(#flow-arrow)"></line><circle class="flow-node-dot" cx="{{ edge.x1 }}" cy="{{ edge.y1 }}" r="3"></circle><circle class="flow-node-dot" cx="{{ edge.x2 }}" cy="{{ edge.y2 }}" r="3"></circle><title>{{ edge.label }} — {{ edge.subtitle }}</title></a>{% endfor %}
+
+    <div class="flow-overlays">
+      {% for block in flow.job_blocks %}
+      <div class="flow-job-overlay status-{{ block.status }}"
+           data-job="{{ block.job_id }}"
+           data-search="{{ block.job_code }} {{ block.subtitle }}"
+           style="left:{{ block.left }}px; top:{{ block.top }}px; width:{{ block.width }}px; height:{{ block.height }}px;">
+        {% if block.up_height > 0 %}
+        <div class="flow-job-up-band" style="top:{{ block.up_offset }}px; height:{{ block.up_height }}px;" title="Contract Up"></div>
+        {% endif %}
+        <div class="flow-job-head" style="height:{{ flow.job_head_height }}px;">
+          <a class="flow-job-name" href="{{ block.href }}">{{ block.job_code }}</a>
+          {% if block.subtitle %}<small class="flow-job-tents">{{ block.subtitle }}</small>{% endif %}
+        </div>
+        {% for ev in block.events %}
+        {% set day_top = ev.day_offset * flow.row_height %}
+        {% set stack_px = (ev.stack_index or 0) * 13 %}
+        {# Keep arrivals below the job-name strip on day 0 so the label stays readable #}
+        {% if ev.kind == 'arrival' %}
+          {% if ev.day_offset == 0 %}
+            {% set ev_top = flow.job_head_height + stack_px %}
+          {% else %}
+            {% set ev_top = day_top + 2 + stack_px %}
+          {% endif %}
+        {% else %}
+          {% set ev_top = day_top + flow.row_height - 15 - stack_px %}
+          {% if ev_top < flow.job_head_height and ev.day_offset == 0 %}
+            {% set ev_top = flow.job_head_height + 2 + stack_px %}
+          {% endif %}
+        {% endif %}
+        <a class="flow-line flow-{{ ev.kind }} load-color-{{ ev.color_index }}"
+           href="{{ ev.href }}"
+           style="top:{{ ev_top }}px;"
+           data-search="{{ ev.search }}"
+           data-load="{{ ev.load_id }}"
+           data-loads="{{ ev.load_id }}"
+           data-label="L{{ ev.load_number }}"
+           data-codes="{{ ev.codes }}"
+           data-full="{{ ev.full_contents }}"
+           data-origin="{{ ev.origin_name }}"
+           data-dest="{{ ev.dest_name }}"
+           data-depart="{{ ev.depart_label }}"
+           data-arrive="{{ ev.arrive_label }}"
+           data-vehicle="{{ ev.vehicle_type }}"
+           data-haulier="{{ ev.haulier_name }}"
+           data-href="{{ ev.href }}"
+           title="{{ ev.full_contents }}">{% if ev.kind == 'arrival' %}↓{% else %}↑{% endif %} {{ ev.text }}</a>
+        {% endfor %}
+      </div>
+      {% endfor %}
+
+      {% if yard_col %}
+      {% for mark in flow.yard_marks %}
+      <a class="flow-line flow-{{ mark.kind }} load-color-{{ mark.color_index }} flow-yard-mark"
+         href="{{ mark.href }}"
+         style="left:{{ yard_col.x + 2 }}px; top:{{ mark.top + 2 }}px; width:{{ yard_col.width - 4 }}px;"
+         data-search="{{ mark.search }}"
+         data-load="{{ mark.load_ids[0] if mark.load_ids else '' }}"
+         data-loads="{{ mark.load_ids | join(',') }}"
+         data-label="{{ mark.text }}"
+         data-codes="{{ mark.codes }}"
+         data-full="{{ mark.full_contents }}"
+         data-origin="{{ mark.origin_name }}"
+         data-dest="{{ mark.dest_name }}"
+         data-depart="{{ mark.depart_label }}"
+         data-arrive="{{ mark.arrive_label }}"
+         data-vehicle="{{ mark.vehicle_type }}"
+         data-haulier="{{ mark.haulier_name }}"
+         data-href="{{ mark.href }}"
+         title="{{ mark.full_contents }}">{{ mark.text }}</a>
+      {% endfor %}
+      {% endif %}
+    </div>
+
+    <svg class="flow-edges" id="flow-edges"
+         style="top:0; left:0; width:{{ flow.width }}px; height:{{ flow.height }}px;"
+         viewBox="0 0 {{ flow.width }} {{ flow.height }}"
+         preserveAspectRatio="none">
+      <defs>
+        <marker id="flow-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="#444"></path>
+        </marker>
+      </defs>
+      {% for edge in flow.edges %}
+      <g class="flow-edge-group load-color-{{ edge.color_index }}"
+         data-load="{{ edge.load_ids[0] if edge.load_ids else '' }}"
+         data-loads="{{ edge.load_ids | join(',') }}"
+         data-label="{{ edge.label }}"
+         data-full="{{ edge.full_contents }}"
+         data-origin="{{ edge.origin_name }}"
+         data-dest="{{ edge.dest_name }}"
+         data-depart="{{ edge.depart_label }}"
+         data-arrive="{{ edge.arrive_label }}"
+         data-vehicle="{{ edge.vehicle_type }}"
+         data-haulier="{{ edge.haulier_name }}"
+         data-href="{{ edge.href }}">
+        <a class="flow-edge load-color-{{ edge.color_index }}" href="{{ edge.href }}">
+          <line x1="{{ edge.x1 }}" y1="{{ edge.y1 }}" x2="{{ edge.x2 }}" y2="{{ edge.y2 }}" marker-end="url(#flow-arrow)"></line>
+        </a>
+        <a class="flow-edge-label load-color-{{ edge.color_index }}" href="{{ edge.href }}">
+          <rect x="{{ edge.lx - (edge.label_width // 2) }}" y="{{ edge.ly - 9 }}"
+                width="{{ edge.label_width }}" height="16" rx="3" class="flow-edge-label-bg"></rect>
+          <text x="{{ edge.lx }}" y="{{ edge.ly + 3 }}" text-anchor="middle" class="flow-edge-label-text">{{ edge.label }}</text>
+        </a>
+      </g>
+      {% endfor %}
     </svg>
   </div>
 </div>
 {% endif %}
-<aside id="board-panel" class="board-panel" hidden aria-live="polite"><div class="board-panel-header"><h2 class="h5 mb-0">Selection</h2><button class="btn-close" aria-label="Close"></button></div><div class="panel-copy"></div></aside><script src="{{ url_for('static', path='/js/board.js') }}" defer></script><script src="{{ url_for('static', path='/js/flow.js') }}" defer></script>{% endblock %}
+
+<aside id="board-panel" class="board-panel" hidden aria-live="polite">
+  <div class="board-panel-header">
+    <h2 class="h5 mb-0" id="board-panel-title">Selection</h2>
+    <button type="button" class="btn-close" aria-label="Close"></button>
+  </div>
+  <div class="panel-copy"></div>
+</aside>
+<script src="{{ url_for('static', path='/js/flow.js') }}" defer></script>
+{% endblock %}

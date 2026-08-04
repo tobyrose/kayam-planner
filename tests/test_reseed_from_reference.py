@@ -42,17 +42,16 @@ def test_reseed_populates_jobs_and_stock_and_preserves_reference_data(session: S
     assert len(session.scalars(select(EquipmentAsset)).all()) == assets_created
 
     jobs_created = reseed_jobs(session)
-    assert jobs_created == 9
+    # 9 CSV rows, but two share the JOB name SOLIDAYS → 8 jobs (SOLIDAYS has two tents).
+    assert jobs_created == 8
 
     jobs = session.scalars(select(Job)).all()
-    assert {job.job_code for job in jobs} >= {"CATALYST", "ROSKILDE", "SOLIDAYS", "SOLIDAYS-2"}
+    assert {job.job_code for job in jobs} >= {"CATALYST", "ROSKILDE", "SOLIDAYS"}
+    assert "SOLIDAYS-2" not in {job.job_code for job in jobs}
     # Every phase lands unassigned — no Tentmaster attached by the reseed.
     phases = session.scalars(select(JobPhase)).all()
     assert phases
     assert all(phase.tentmaster_id is None for phase in phases)
-
-    # Every job in the (corrected) source CSV parses cleanly now — all 9 get a real tent.
-    assert all(len(job.tent_requirements) == 1 for job in jobs)
 
     silverstone = next(job for job in jobs if job.job_code == "SILVERSTONE")
     assert "T" in silverstone.tent_requirements[0].sequence_code
@@ -62,10 +61,13 @@ def test_reseed_populates_jobs_and_stock_and_preserves_reference_data(session: S
     assert len(catalyst.tent_requirements) == 1
     assert catalyst.tent_requirements[0].sequence_code == "VOEVVVVOE"
 
-    # Both SOLIDAYS tents are at the same real venue (Longchamp) and share one Location row.
-    solidays = [job for job in jobs if job.job_code.startswith("SOLIDAYS")]
-    assert len(solidays) == 2
-    assert solidays[0].location_id == solidays[1].location_id
+    # SOLIDAYS is one job with two tents (two CSV rows, same JOB name), not two jobs.
+    solidays = next(job for job in jobs if job.job_code == "SOLIDAYS")
+    assert len(solidays.tent_requirements) == 2
+    tent_labels = {tent.custom_name for tent in solidays.tent_requirements}
+    assert tent_labels == {"6 K SC", "4 Siam"}
+    sequences = {tent.sequence_code for tent in solidays.tent_requirements}
+    assert sequences == {"KMmSC", "sms"}
 
 
 def test_reseed_is_safely_rerunnable(session: Session) -> None:
@@ -84,8 +86,8 @@ def test_reseed_is_safely_rerunnable(session: Session) -> None:
     reseed_stock(session, yard)
     second_run_jobs = reseed_jobs(session)
 
-    assert first_run_jobs == second_run_jobs == 9
-    assert len(session.scalars(select(Job)).all()) == 9
+    assert first_run_jobs == second_run_jobs == 8
+    assert len(session.scalars(select(Job)).all()) == 8
 
 
 def test_reseed_maps_stock_codes_by_prefix_correctly(session: Session) -> None:

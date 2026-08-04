@@ -1,10 +1,8 @@
 # Load Diagram & Auto-Routing Engine — Design Notes
 
-**Status:** Design conversation in progress. Nothing in this document is built. This is the
-owner's "crack it" feature after ~30 years of doing it by hand in Excel — deliberately deferred in
-the original spec (D014) and getting its own design pass before any code, per the owner's explicit
-request on 2026-08-03. This file is the durable record of that conversation so it survives context
-resets — update it in place as the conversation continues, don't let detail live only in chat.
+**Status:** Design settled for V1; **engine first cut shipped 2026-08-04** as
+`SeasonPlanService` (`app/services/season_plan.py`) + **Generate season loads & crew moves** on
+`/loads`. **Loads Diagram UI shipped** on `/planning/flow` (Yard + packed job columns, arrivals/departures, load colour, SVG edges). Refine in place.
 
 **Feeds:** `IMPLEMENTATION_PLAN.md` top-roadmap item 5 ("Automatic load-design/routing engine with
 manual override"). Related open items: `OPEN_QUESTIONS.md` Q042 (lorry-loading capacity data),
@@ -284,8 +282,23 @@ the routing engine itself:
   not impossible (the owner ruled out "spare capacity" matching but a direct-move-preference still
   needs *some* tie-breaking rule for genuinely marginal cases).
 
-With the diagram's design settled, the Loads Diagram itself (§1) could reasonably move to
-implementation next, ahead of the routing engine (§2) — it's a read/visualisation feature over
-already-existing `Load`/`EquipmentMovement`/`JobEquipmentRequirement` data (once loads exist to
-show), with no open design questions left, unlike §2 which still has real unresolved algorithm
-choices above.
+## 5. V1 engine shipped (2026-08-04) — what it does / does not
+
+**UI:** `POST /loads/generate-season` from the Loads list (confirm dialog). Replaces unlocked
+auto-generated movements/loads (`source=GENERATED`) and crew moves whose notes contain the auto
+marker. Locked loads/moves are never deleted.
+
+**Loads algorithm (quantity-by-type, sections only):**
+1. Jobs ordered by earliest Build start.
+2. For each job, shortfall = required sections − already arriving (kept/locked) loads.
+3. Prefer stock freed after an earlier job's contract Down (job→job direct); remainder from Yard.
+4. Pack into **Flat** (else Curtain) lorries by Q042 points (Valhalla ends ≈ 1 Flatbed, middles half).
+5. Arrival after Tentmaster-on-site when assigned; else contract Up − 12h (warning).
+6. Travel time from lat/long haversine at 50 km/h + pad, min 6h; 24h if no coords.
+
+**Crew moves:** For each Tentmaster, between consecutive job visits at different locations, create
+a planned van leg. Notes mark auto plans for safe re-run.
+
+**Still not in this cut:** Loads Diagram UI (§1), spare-capacity hitchhiking (out of scope),
+named asset assignment, multi-leg via-yard optimisation, re-plan delay buffer, manual
+add/remove-on-load stretch goal.

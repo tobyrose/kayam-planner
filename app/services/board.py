@@ -8,19 +8,25 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from app.config import get_settings
-from app.models.administration import Tentmaster
+from app.models.administration import EquipmentAsset, Tentmaster
 from app.models.crew_movements import CrewMovement
 from app.models.crew_planning import CrewActivity
 from app.models.jobs import (
     Job,
+    JobEquipmentRequirement,
     JobPhase,
     JobTentRequirement,
     JobTentSection,
     PhaseType,
 )
-from app.models.logistics import EquipmentMovement, Load
+from app.models.logistics import EquipmentMovement, Load, LoadItem
 from app.services.jobs import BREAK_TRAIL_DAYS, BUILD_LEAD_DAYS
 from app.services.roster import RosterIndex, phase_roster
+from app.services.section_coverage import (
+    format_section_shortfall,
+    job_has_section_shortfall,
+    section_shortfalls,
+)
 
 
 @dataclass(frozen=True)
@@ -39,6 +45,8 @@ class BoardBlock:
     # local-crew arrive/depart, contract Up/Down markers — auto-growing the block vertically
     # rather than living in their own side columns (D0xx).
     detail_lines: tuple[str, ...] = ()
+    # Phase type value (build/up/break/…) for colour coding; empty for non-job blocks.
+    phase_type: str = ""
 
 
 @dataclass(frozen=True)
@@ -133,26 +141,119 @@ def _pack_unassigned_columns(
     return assignment
 
 
+def _local_clock(value: datetime) -> str:
+    """Contract times are stored UTC-aware; show them in the planner's default timezone."""
+    timezone = ZoneInfo(get_settings().default_timezone)
+    return value.astimezone(timezone).strftime("%H:%M")
+
+
+def _phase_block_label(phase: JobPhase, *, day: date | None = None) -> str:
+    """Job code · phase. Contract Up/Break times only when `day` is that contract day."""
+    phase_word = phase.phase_type.value.replace("_", " ")
+    timezone = ZoneInfo(get_settings().default_timezone)
+    if phase.phase_type == PhaseType.UP:
+        requirement = next(
+            (
+                tent
+                for tent in phase.job.tent_requirements
+                if tent.id == phase.job_tent_requirement_id
+            ),
+            None,
+        )
+        if requirement is not None:
+            tent_label = requirement.custom_name or requirement.sequence_code
+            up_day = requirement.contracted_up_at.astimezone(timezone).date()
+            if day is None or day == up_day:
+                return (
+                    f"{phase.job.job_code} · up "
+                    f"{_local_clock(requirement.contracted_up_at)} ({tent_label})"
+                )
+            return f"{phase.job.job_code} · up"
+    if phase.phase_type == PhaseType.BREAK and phase.job.tent_requirements:
+        tents = phase.job.tent_requirements
+        if len(tents) == 1:
+            tent = tents[0]
+            down_day = tent.contracted_down_at.astimezone(timezone).date()
+            if day is None or day == down_day:
+                return (
+                    f"{phase.job.job_code} · break {_local_clock(tent.contracted_down_at)}"
+                )
+            return f"{phase.job.job_code} · break"
+    return f"{phase.job.job_code} · {phase_word}"
+
+
+def _merged_up_label(up_phases: list[JobPhase]) -> str:
+    """One label for one or many concurrent Up phases of the same job in the same column."""
+    if len(up_phases) == 1:
+        return _phase_block_label(up_phases[0])
+    job = up_phases[0].job
+    tent_bits: list[str] = []
+    for phase in sorted(up_phases, key=lambda item: item.start_at):
+        requirement = next(
+            (
+                tent
+                for tent in job.tent_requirements
+                if tent.id == phase.job_tent_requirement_id
+            ),
+            None,
+        )
+        if requirement is None:
+            continue
+        tent_bits.append(
+            f"{_local_clock(requirement.contracted_up_at)} "
+            f"({requirement.custom_name or requirement.sequence_code})"
+        )
+    if tent_bits:
+        return f"{job.job_code} · up " + " · ".join(tent_bits)
+    return f"{job.job_code} · up ({len(up_phases)} tents)"
+
+
+def _ups_with_contract_up_on_day(up_phases: list[JobPhase], day: date) -> list[JobPhase]:
+    """Up phases whose tent's contract Up wall-clock date is exactly this diary day."""
+    timezone = ZoneInfo(get_settings().default_timezone)
+    matching: list[JobPhase] = []
+    for phase in up_phases:
+        requirement = next(
+            (
+                tent
+                for tent in phase.job.tent_requirements
+                if tent.id == phase.job_tent_requirement_id
+            ),
+            None,
+        )
+        if requirement is None:
+            continue
+        if requirement.contracted_up_at.astimezone(timezone).date() == day:
+            matching.append(phase)
+    return matching
+
+
 def _detail_lines(
     phase: JobPhase,
     day: date,
     loads_by_job: dict[int, list[Load]],
     crew_moves_by_tentmaster: dict[int, list[CrewMovement]],
+    *,
+    include_all_tents: bool = False,
 ) -> tuple[str, ...]:
     lines: list[str] = []
     for requirement in phase.job.tent_requirements:
-        # An Up phase only annotates its own tent's milestones; Build/Break phases are job-wide
-        # (`job_tent_requirement_id` is null) so they show every tent's milestones that fall today.
+        # An Up phase only annotates its own tent's milestones unless we are rendering a merged
+        # multi-tent Up block (include_all_tents=True). Build/Break are always job-wide.
         if (
-            phase.job_tent_requirement_id is not None
+            not include_all_tents
+            and phase.job_tent_requirement_id is not None
             and requirement.id != phase.job_tent_requirement_id
         ):
             continue
         label = requirement.custom_name or requirement.sequence_code
-        if requirement.contracted_up_at.date() == day:
-            lines.append(f"UP {requirement.contracted_up_at.strftime('%H:%M')} ({label})")
-        if _last_day(requirement.contracted_down_at) == day:
-            lines.append(f"BREAK {requirement.contracted_down_at.strftime('%H:%M')} ({label})")
+        timezone = ZoneInfo(get_settings().default_timezone)
+        local_up = requirement.contracted_up_at.astimezone(timezone)
+        local_down = requirement.contracted_down_at.astimezone(timezone)
+        if local_up.date() == day:
+            lines.append(f"UP {_local_clock(requirement.contracted_up_at)} ({label})")
+        if local_down.date() == day:
+            lines.append(f"BREAK {_local_clock(requirement.contracted_down_at)} ({label})")
     for booking in phase.job.local_crew_bookings:
         if booking.start_at.date() == day:
             lines.append(f"Local crew arrive: {booking.headcount}")
@@ -199,6 +300,9 @@ class BoardService:
                 .selectinload(JobTentRequirement.sections)
                 .selectinload(JobTentSection.equipment_type),
                 selectinload(JobPhase.job).selectinload(Job.local_crew_bookings),
+                selectinload(JobPhase.job)
+                .selectinload(Job.equipment_requirements)
+                .selectinload(JobEquipmentRequirement.equipment_type),
             )
         ).all()
         activities = self.session.scalars(
@@ -216,6 +320,10 @@ class BoardService:
             .options(
                 selectinload(Load.movement).selectinload(EquipmentMovement.origin),
                 selectinload(Load.movement).selectinload(EquipmentMovement.destination),
+                selectinload(Load.items)
+                .selectinload(LoadItem.equipment_asset)
+                .selectinload(EquipmentAsset.equipment_type),
+                selectinload(Load.items).selectinload(LoadItem.equipment_type),
             )
         ).all()
         jobs = {phase.job_id: phase.job for phase in phases}
@@ -233,18 +341,36 @@ class BoardService:
         loads_by_job: dict[int, list[Load]] = {}
         for load in loads:
             movement = load.movement
+            # Match loads to jobs at the same destination whose operational window contains
+            # the arrival (with a few days' lead for early staging before Build).
             job_id = next(
                 (
                     job.id
                     for job in jobs.values()
                     if job.location_id == movement.destination_location_id
                     and (window := _job_window(job)) is not None
-                    and window[0] <= movement.arrive_by <= window[1]
+                    and window[0] - timedelta(days=3)
+                    <= movement.arrive_by
+                    <= window[1]
                 ),
                 None,
             )
             if job_id is not None:
                 loads_by_job.setdefault(job_id, []).append(load)
+        # Jobs whose required sections are not fully covered by loads to the site — same red
+        # attention dot as crew shortfall on every phase block for that job.
+        jobs_short_sections = {
+            job_id
+            for job_id, job in jobs.items()
+            if job_has_section_shortfall(job, loads_by_job.get(job_id, []))
+        }
+        section_shortfall_lines = {
+            job_id: format_section_shortfall(
+                section_shortfalls(job, loads_by_job.get(job_id, []))
+            )
+            for job_id, job in jobs.items()
+            if job_id in jobs_short_sections
+        }
         crew_moves_by_tentmaster: dict[int, list[CrewMovement]] = {}
         for crew_movement in crew_moves:
             if crew_movement.tentmaster_id is not None:
@@ -261,6 +387,21 @@ class BoardService:
             unassigned_spans[phase.job_id] = (span_start, span_end)
         unassigned_column_by_job = _pack_unassigned_columns(unassigned_spans)
         unassigned_columns = max(1, len(set(unassigned_column_by_job.values())))
+
+        def _column_key(phase: JobPhase) -> tuple[str, int]:
+            if phase.tentmaster_id is not None and phase.tentmaster_id in {
+                team.id for team in teams
+            }:
+                return ("team", phase.tentmaster_id)
+            return ("unassigned", unassigned_column_by_job[phase.job_id])
+
+        # All Up phases for a job that share a column merge into one continuous bar (multi-tent
+        # jobs like SOLIDAYS should not stack two Up cards once both tents are up).
+        up_phases_by_group: dict[tuple[tuple[str, int], int], list[JobPhase]] = {}
+        for phase in phases:
+            if phase.phase_type != PhaseType.UP:
+                continue
+            up_phases_by_group.setdefault((_column_key(phase), phase.job_id), []).append(phase)
 
         days = []
         for offset in range((end - start).days + 1):
@@ -279,50 +420,130 @@ class BoardService:
             # the earlier one, the earlier phase's own column still needs its own card shown.
             phase_types_by_group: dict[tuple[tuple[str, int], int], set[PhaseType]] = {}
             for phase in day_phases:
-                target = (
-                    ("team", phase.tentmaster_id)
-                    if phase.tentmaster_id in team_blocks
-                    else ("unassigned", unassigned_column_by_job[phase.job_id])
-                )
+                target = _column_key(phase)
                 phase_types_by_group.setdefault((target, phase.job_id), set()).add(
                     phase.phase_type
                 )
+
+            emitted_up_groups: set[tuple[tuple[str, int], int]] = set()
             for phase in day_phases:
-                target = (
-                    ("team", phase.tentmaster_id)
-                    if phase.tentmaster_id in team_blocks
-                    else ("unassigned", unassigned_column_by_job[phase.job_id])
-                )
-                types_present = phase_types_by_group[(target, phase.job_id)]
+                target = _column_key(phase)
+                group_key = (target, phase.job_id)
+                types_present = phase_types_by_group[group_key]
                 if phase.phase_type == PhaseType.BUILD and PhaseType.UP in types_present:
                     continue
                 if phase.phase_type == PhaseType.UP and PhaseType.BREAK in types_present:
                     continue
-                roster = phase_roster(phase, roster_index)
-                segment = _segment(day, phase.start_at.date(), _last_day(phase.end_at))
-                subtitle_parts = [phase.job.location.name]
-                tent_summary = tent_summaries.get(phase.job_id)
-                if tent_summary:
-                    subtitle_parts.append(tent_summary)
-                subtitle_parts.append(f"{roster.assigned}/{roster.required} crew")
-                block = BoardBlock(
-                    "job",
-                    phase.id,
-                    f"{phase.job.job_code} · {phase.phase_type.value.replace('_', ' ')}",
-                    " · ".join(subtitle_parts),
-                    f"/jobs/{phase.job_id}",
-                    phase.job.commercial_status.value,
-                    job_id=phase.job_id,
-                    phase_id=phase.id,
-                    conflict=roster.shortfall > 0,
-                    segment=segment,
-                    detail_lines=_detail_lines(phase, day, loads_by_job, crew_moves_by_tentmaster),
-                )
-                if phase.tentmaster_id in team_blocks:
-                    team_blocks[phase.tentmaster_id].append(block)
+
+                if phase.phase_type == PhaseType.UP:
+                    if group_key in emitted_up_groups:
+                        continue
+                    emitted_up_groups.add(group_key)
+                    group_ups = up_phases_by_group[group_key]
+                    today_ups = [
+                        item
+                        for item in group_ups
+                        if _overlaps_day(item.start_at, item.end_at, day)
+                    ]
+                    if not today_ups:
+                        continue
+                    span_start = min(item.start_at.date() for item in group_ups)
+                    span_end = max(_last_day(item.end_at) for item in group_ups)
+                    segment = _segment(day, span_start, span_end)
+                    primary = min(today_ups, key=lambda item: (item.start_at, item.id))
+                    roster = phase_roster(primary, roster_index)
+                    # Combined crew when several Up phases share the column today.
+                    if len(today_ups) > 1:
+                        assigned = 0
+                        required = 0
+                        shortfall = False
+                        for up_phase in today_ups:
+                            up_roster = phase_roster(up_phase, roster_index)
+                            assigned += up_roster.assigned
+                            required += up_roster.required
+                            shortfall = shortfall or up_roster.shortfall > 0
+                        crew_text = f"{assigned}/{required} crew"
+                        conflict = shortfall
+                    else:
+                        crew_text = f"{roster.assigned}/{roster.required} crew"
+                        conflict = roster.shortfall > 0
+                    conflict = conflict or primary.job_id in jobs_short_sections
+                    subtitle_parts = [primary.job.location.name]
+                    tent_summary = tent_summaries.get(primary.job_id)
+                    if tent_summary:
+                        subtitle_parts.append(tent_summary)
+                    subtitle_parts.append(crew_text)
+                    detail_lines = _detail_lines(
+                        primary,
+                        day,
+                        loads_by_job,
+                        crew_moves_by_tentmaster,
+                        include_all_tents=len(group_ups) > 1,
+                    )
+                    short_line = section_shortfall_lines.get(primary.job_id)
+                    if short_line and segment in ("start", "solo"):
+                        detail_lines = (*detail_lines, short_line)
+                    # Diary rule: contract Up clock/label only on the actual contracted Up day.
+                    # Other Up days are a quiet continuous bar ("JOB · up"), no repeated UP time.
+                    ups_going_up_today = _ups_with_contract_up_on_day(today_ups, day)
+                    if ups_going_up_today:
+                        label = (
+                            _phase_block_label(ups_going_up_today[0])
+                            if len(ups_going_up_today) == 1
+                            else _merged_up_label(ups_going_up_today)
+                        )
+                    elif len(group_ups) > 1:
+                        label = f"{primary.job.job_code} · up ({len(group_ups)} tents)"
+                    else:
+                        label = f"{primary.job.job_code} · up"
+                    block = BoardBlock(
+                        "job",
+                        primary.id,
+                        label,
+                        " · ".join(subtitle_parts),
+                        f"/jobs/{primary.job_id}",
+                        primary.job.commercial_status.value,
+                        job_id=primary.job_id,
+                        phase_id=primary.id,
+                        conflict=conflict,
+                        segment=segment,
+                        detail_lines=detail_lines,
+                        phase_type=PhaseType.UP.value,
+                    )
                 else:
-                    column = unassigned_column_by_job[phase.job_id]
-                    unassigned_blocks[column].append(block)
+                    roster = phase_roster(phase, roster_index)
+                    segment = _segment(day, phase.start_at.date(), _last_day(phase.end_at))
+                    subtitle_parts = [phase.job.location.name]
+                    tent_summary = tent_summaries.get(phase.job_id)
+                    if tent_summary:
+                        subtitle_parts.append(tent_summary)
+                    subtitle_parts.append(f"{roster.assigned}/{roster.required} crew")
+                    detail_lines = _detail_lines(
+                        phase, day, loads_by_job, crew_moves_by_tentmaster
+                    )
+                    short_line = section_shortfall_lines.get(phase.job_id)
+                    if short_line and segment in ("start", "solo"):
+                        detail_lines = (*detail_lines, short_line)
+                    label = _phase_block_label(phase, day=day)
+                    block = BoardBlock(
+                        "job",
+                        phase.id,
+                        label,
+                        " · ".join(subtitle_parts),
+                        f"/jobs/{phase.job_id}",
+                        phase.job.commercial_status.value,
+                        job_id=phase.job_id,
+                        phase_id=phase.id,
+                        conflict=roster.shortfall > 0 or phase.job_id in jobs_short_sections,
+                        segment=segment,
+                        detail_lines=detail_lines,
+                        phase_type=phase.phase_type.value,
+                    )
+
+                if target[0] == "team":
+                    team_blocks[target[1]].append(block)
+                else:
+                    unassigned_blocks[target[1]].append(block)
             for activity in activities:
                 if activity.tentmaster_id in team_blocks and _overlaps_day(
                     activity.start_at, activity.end_at, day

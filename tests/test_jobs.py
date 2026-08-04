@@ -24,6 +24,7 @@ from app.models.jobs import (
 )
 from app.schemas.jobs import JobData
 from app.services.jobs import JobError, JobService
+from app.time_display import wall_clock_input
 
 LONDON = ZoneInfo("Europe/London")
 
@@ -382,3 +383,45 @@ def test_reassign_phase_tentmaster_rejects_locked_phase(session: Session) -> Non
 
     with pytest.raises(JobError, match="locked"):
         JobService(session).reassign_phase_tentmaster(phase.id, tentmaster.id)
+
+
+def test_up_phase_save_round_trip_keeps_contract_wall_clock(session: Session) -> None:
+    """Form shows wall-clock times; saving without edits must not fail validation."""
+    seed_development_data(session)
+    location = session.scalar(select(Location))
+    assert location is not None
+    service = JobService(session)
+    job = service.create_job(job_payload(location.id, "WALL-CLOCK-1"))
+    up_at = datetime(2026, 6, 17, 18, 0, tzinfo=LONDON)
+    down_at = datetime(2026, 7, 1, 18, 0, tzinfo=LONDON)
+    service.add_tent_requirement(
+        job.id,
+        {
+            "sequence": "K-M-M-K",
+            "quantity": 1,
+            "custom_name": "Main",
+            "contracted_up_at": up_at,
+            "contracted_down_at": down_at,
+        },
+    )
+    session.refresh(job)
+    up_phase = next(phase for phase in job.phases if phase.phase_type == PhaseType.UP)
+
+    # Simulate what the browser submits: wall-clock form values for the stored instants.
+    payload = {
+        "phase_type": PhaseType.UP,
+        "job_tent_requirement_id": up_phase.job_tent_requirement_id,
+        "tentmaster_id": None,
+        "start_at": datetime.fromisoformat(wall_clock_input(up_phase.start_at)).replace(
+            tzinfo=LONDON
+        ),
+        "end_at": datetime.fromisoformat(wall_clock_input(up_phase.end_at)).replace(
+            tzinfo=LONDON
+        ),
+        "required_headcount": up_phase.required_headcount,
+        "locked": False,
+    }
+    updated = service.update_phase(job.id, up_phase.id, payload)
+    assert updated.start_at == up_phase.start_at or updated.start_at == up_at
+    assert wall_clock_input(updated.start_at) == "2026-06-17T18:00"
+    assert wall_clock_input(updated.end_at) == "2026-07-01T18:00"

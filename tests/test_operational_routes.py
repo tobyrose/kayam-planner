@@ -98,13 +98,96 @@ def test_job_page_splits_into_read_view_and_edit_surface(
     assert edit_page.status_code == 200
     assert f'action="/jobs/{job.id}/tent-requirements"' in edit_page.text
     assert f'action="/jobs/{job.id}/phases/new"' in edit_page.text
+    assert f'action="/jobs/{job.id}/phases/save-all"' in edit_page.text
     assert f'action="/jobs/{job.id}/local-crew"' in edit_page.text
+    assert "Save all phases" in edit_page.text
 
     summary = client.get(f"/jobs/{job.id}/summary")
     assert summary.status_code == 200
     assert job.name in summary.text
     assert "<nav" not in summary.text
     assert f'action="/jobs/{job.id}/tent-requirements"' not in summary.text
+    assert "Loads" in summary.text
+
+
+def test_job_summary_lists_inbound_and_outbound_loads(
+    session: Session, client: TestClient
+) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    from app.models.administration import EquipmentType, Location, LocationType, LorryType
+    from app.models.jobs import CommercialStatus, Job
+    from app.models.logistics import EquipmentMovement, Load, LoadItem, MovementStatus
+    from app.services.jobs import JobService
+
+    seed_development_data(session)
+    yard = session.scalar(select(Location).where(Location.location_type == LocationType.YARD))
+    site = Location(name="Panel Loads Site", location_type=LocationType.SITE)
+    session.add(site)
+    session.flush()
+    lorry = session.scalar(select(LorryType).where(LorryType.active.is_(True)))
+    equipment_type = session.scalar(select(EquipmentType).where(EquipmentType.code == "K"))
+    assert yard is not None and lorry is not None and equipment_type is not None
+
+    job = Job(
+        job_code="PANEL-LOADS",
+        name="Panel loads job",
+        customer_name="Fixture",
+        location_id=site.id,
+        commercial_status=CommercialStatus.QUOTED,
+    )
+    session.add(job)
+    session.commit()
+    up = datetime(2026, 8, 20, 12, tzinfo=UTC)
+    JobService(session).add_tent_requirement(
+        job.id,
+        {
+            "sequence": "K",
+            "quantity": 1,
+            "contracted_up_at": up,
+            "contracted_down_at": up + timedelta(days=4),
+        },
+    )
+    inbound = EquipmentMovement(
+        movement_code="PANEL-IN",
+        origin_location_id=yard.id,
+        destination_location_id=site.id,
+        depart_after=up - timedelta(days=4),
+        arrive_by=up - timedelta(days=3),
+        status=MovementStatus.PLANNED,
+    )
+    inbound.loads.append(
+        Load(
+            load_number=41,
+            lorry_type_id=lorry.id,
+            items=[LoadItem(equipment_type_id=equipment_type.id, quantity=1)],
+        )
+    )
+    outbound = EquipmentMovement(
+        movement_code="PANEL-OUT",
+        origin_location_id=site.id,
+        destination_location_id=yard.id,
+        depart_after=up + timedelta(days=4),
+        arrive_by=up + timedelta(days=5),
+        status=MovementStatus.PLANNED,
+    )
+    outbound.loads.append(
+        Load(
+            load_number=42,
+            lorry_type_id=lorry.id,
+            items=[LoadItem(equipment_type_id=equipment_type.id, quantity=1)],
+        )
+    )
+    session.add_all([inbound, outbound])
+    session.commit()
+
+    summary = client.get(f"/jobs/{job.id}/summary")
+    assert summary.status_code == 200
+    assert "L41" in summary.text
+    assert "L42" in summary.text
+    assert "Arriving" in summary.text
+    assert "Leaving" in summary.text
+    assert equipment_type.code in summary.text
 
 
 def test_roster_move_route_updates_membership_and_redirects(

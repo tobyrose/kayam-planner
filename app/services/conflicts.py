@@ -16,8 +16,10 @@ from app.models.jobs import (
 )
 from app.models.logistics import Load, LoadItem
 from app.services.crew_planning import CrewPlanningService
+from app.services.jobs import BREAK_TRAIL_DAYS, BUILD_LEAD_DAYS
 from app.services.logistics import LogisticsService
 from app.services.roster import RosterIndex
+from app.services.section_coverage import format_section_shortfall, section_shortfalls
 
 
 @dataclass(frozen=True)
@@ -177,6 +179,53 @@ class ConflictCentreService:
                         "crew shortfall",
                         f"{phase.job.job_code} {phase.phase_type.value} is short by {shortfall}",
                         f"/jobs/{phase.job_id}",
+                    )
+                )
+        # Section coverage: required tent sections vs contents of loads arriving at the job site.
+        jobs_for_sections = self.session.scalars(
+            select(Job).options(
+                selectinload(Job.equipment_requirements).selectinload(
+                    JobEquipmentRequirement.equipment_type
+                ),
+                selectinload(Job.tent_requirements),
+                selectinload(Job.location),
+            )
+        ).all()
+        all_loads = self.session.scalars(
+            select(Load).options(
+                selectinload(Load.movement),
+                selectinload(Load.items).selectinload(LoadItem.equipment_asset),
+                selectinload(Load.items).selectinload(LoadItem.equipment_type),
+            )
+        ).all()
+        for job in jobs_for_sections:
+            if not job.tent_requirements:
+                continue
+            starts = [
+                tent.contracted_up_at - timedelta(days=BUILD_LEAD_DAYS)
+                for tent in job.tent_requirements
+            ]
+            ends = [
+                tent.contracted_down_at + timedelta(days=BREAK_TRAIL_DAYS)
+                for tent in job.tent_requirements
+            ]
+            window_start, window_end = min(starts), max(ends)
+            job_loads = [
+                load
+                for load in all_loads
+                if load.movement.destination_location_id == job.location_id
+                and window_start - timedelta(days=3)
+                <= load.movement.arrive_by
+                <= window_end
+            ]
+            short = section_shortfalls(job, job_loads)
+            if short:
+                items.append(
+                    ConflictItem(
+                        "conditional",
+                        "section shortfall",
+                        f"{job.job_code}: {format_section_shortfall(short)}",
+                        f"/jobs/{job.id}",
                     )
                 )
         logistics = LogisticsService(self.session)

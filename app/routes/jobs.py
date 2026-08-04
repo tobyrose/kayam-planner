@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Annotated, Any
 from zoneinfo import ZoneInfo
@@ -10,24 +10,35 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 from pydantic import ValidationError
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.config import get_settings
 from app.database import get_db_session
 from app.main_paths import TEMPLATE_DIRECTORY
 from app.models.administration import EquipmentType, Location, Tentmaster
 from app.models.jobs import CommercialStatus, PhaseType, PlanningStatus, RecordSource
+from app.models.logistics import EquipmentMovement, Load, LoadItem
 from app.services.administration import validation_messages
 from app.services.crew_planning import CrewPlanningService
-from app.services.jobs import JobError, JobNotFoundError, JobService
+from app.services.jobs import (
+    BREAK_TRAIL_DAYS,
+    BUILD_LEAD_DAYS,
+    JobError,
+    JobNotFoundError,
+    JobService,
+)
 from app.services.roster import RosterIndex
+from app.time_display import wall_clock_display, wall_clock_input
 
 router = APIRouter(tags=["jobs"], include_in_schema=False)
 templates = Jinja2Templates(directory=TEMPLATE_DIRECTORY)
+templates.env.filters["wall_input"] = wall_clock_input
+templates.env.filters["wall_clock"] = wall_clock_display
 SessionDependency = Annotated[Session, Depends(get_db_session)]
 
 
 def parse_datetime(value: Any) -> datetime | None:
+    """Parse a form datetime as on-site wall clock in the app default timezone."""
     if value is None or not str(value).strip():
         return None
     parsed = datetime.fromisoformat(str(value))
@@ -95,7 +106,7 @@ def job_form_values(job: Any | None = None) -> dict[str, Any]:
     for name in names:
         value = getattr(job, name)
         if isinstance(value, datetime):
-            values[name] = value.strftime("%Y-%m-%dT%H:%M")
+            values[name] = wall_clock_input(value)
         else:
             values[name] = getattr(value, "value", value)
     return values
@@ -162,6 +173,88 @@ async def create_job(request: Request, session: SessionDependency) -> Response:
     return RedirectResponse(f"/jobs/{job.id}", status_code=303)
 
 
+def _job_operational_window(job: Any) -> tuple[datetime, datetime] | None:
+    if not job.tent_requirements:
+        return None
+    starts = [
+        tent.contracted_up_at - timedelta(days=BUILD_LEAD_DAYS)
+        for tent in job.tent_requirements
+    ]
+    ends = [
+        tent.contracted_down_at + timedelta(days=BREAK_TRAIL_DAYS)
+        for tent in job.tent_requirements
+    ]
+    return min(starts), max(ends)
+
+
+def _load_item_label(item: LoadItem) -> str:
+    if item.equipment_asset is not None:
+        return item.equipment_asset.asset_code
+    et = item.equipment_type
+    if et is None:
+        return "?"
+    if int(item.quantity) == 1:
+        return et.code
+    return f"{int(item.quantity)}×{et.code}"
+
+
+def _loads_for_job(session: Session, job: Any) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Inbound (arriving at site) and outbound (leaving site) loads for the job side panel."""
+    window = _job_operational_window(job)
+    if window is None:
+        return [], []
+    w0, w1 = window
+    loads = session.scalars(
+        select(Load)
+        .join(Load.movement)
+        .options(
+            selectinload(Load.movement).selectinload(EquipmentMovement.origin),
+            selectinload(Load.movement).selectinload(EquipmentMovement.destination),
+            selectinload(Load.items).selectinload(LoadItem.equipment_type),
+            selectinload(Load.items).selectinload(LoadItem.equipment_asset),
+            selectinload(Load.lorry_type),
+            selectinload(Load.lorry),
+        )
+        .order_by(Load.load_number)
+    ).all()
+
+    inbound: list[dict[str, Any]] = []
+    outbound: list[dict[str, Any]] = []
+    for load in loads:
+        movement = load.movement
+        contents = ", ".join(_load_item_label(item) for item in load.items) or "(empty)"
+        vehicle = load.lorry_type.name if load.lorry_type else "—"
+        row = {
+            "id": load.id,
+            "load_number": load.load_number,
+            "label": f"L{load.load_number}",
+            "href": f"/loads/{load.id}",
+            "origin": movement.origin.name,
+            "destination": movement.destination.name,
+            "depart_after": movement.depart_after,
+            "arrive_by": movement.arrive_by,
+            "contents": contents,
+            "vehicle": vehicle,
+            "status": load.status.value if load.status else "",
+            "locked": bool(load.locked),
+        }
+        # Early job→job staging can arrive weeks before Build; still count as this job's inbound.
+        if (
+            movement.destination_location_id == job.location_id
+            and w0 - timedelta(days=90) <= movement.arrive_by <= w1
+        ):
+            inbound.append(row)
+        if (
+            movement.origin_location_id == job.location_id
+            and w0 - timedelta(days=1) <= movement.depart_after <= w1 + timedelta(days=14)
+        ):
+            outbound.append(row)
+
+    inbound.sort(key=lambda r: (r["arrive_by"], r["load_number"]))
+    outbound.sort(key=lambda r: (r["depart_after"], r["load_number"]))
+    return inbound, outbound
+
+
 def _operational_context(session: Session, job: Any) -> dict[str, Any]:
     section_types = session.scalars(
         select(EquipmentType)
@@ -189,6 +282,7 @@ def _operational_context(session: Session, job: Any) -> dict[str, Any]:
         }
     else:
         phase_headcounts = {}
+    inbound_loads, outbound_loads = _loads_for_job(session, job)
     return {
         "job": job,
         "section_types": section_types,
@@ -197,6 +291,8 @@ def _operational_context(session: Session, job: Any) -> dict[str, Any]:
         "phase_types": PhaseType,
         "record_sources": RecordSource,
         "phase_headcounts": phase_headcounts,
+        "inbound_loads": inbound_loads,
+        "outbound_loads": outbound_loads,
     }
 
 
@@ -238,6 +334,7 @@ def edit_job_form(request: Request, job_id: int, session: SessionDependency) -> 
         raise HTTPException(status_code=404, detail=str(error)) from error
     context = form_context(request, session, job_form_values(job), job_id=job_id)
     context.update(_operational_context(session, job))
+    context["saved"] = request.query_params.get("saved")
     return templates.TemplateResponse(request=request, name="jobs/form.html", context=context)
 
 
@@ -285,7 +382,7 @@ async def add_tent_requirement(
         JobService(session).add_tent_requirement(job_id, payload)
     except (ValidationError, JobError) as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
-    return RedirectResponse(f"/jobs/{job_id}#tent-requirements", status_code=303)
+    return RedirectResponse(f"/jobs/{job_id}/edit?saved=tent#tent-requirements", status_code=303)
 
 
 @router.post("/jobs/{job_id}/tent-requirements/{requirement_id}/delete", response_model=None)
@@ -296,7 +393,7 @@ def delete_tent_requirement(
         JobService(session).delete_tent_requirement(job_id, requirement_id)
     except JobNotFoundError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
-    return RedirectResponse(f"/jobs/{job_id}#tent-requirements", status_code=303)
+    return RedirectResponse(f"/jobs/{job_id}/edit?saved=tent#tent-requirements", status_code=303)
 
 
 @router.post("/jobs/{job_id}/regenerate", response_model=None)
@@ -311,12 +408,22 @@ def regenerate_job(job_id: int, session: SessionDependency) -> Response:
     return RedirectResponse(f"/jobs/{job_id}", status_code=303)
 
 
-@router.post("/jobs/{job_id}/phases/{phase_id}", response_model=None)
-async def update_phase(
-    request: Request, job_id: int, phase_id: int, session: SessionDependency
-) -> Response:
-    form = await request.form()
-    payload = {
+def _phase_payload_from_form(form: Any, phase_id: int | str) -> dict[str, Any]:
+    """Read one phase's fields from either per-phase forms or the bulk save-all form."""
+    suffix = f"_{phase_id}"
+    if f"phase_type{suffix}" in form:
+        return {
+            "phase_type": form.get(f"phase_type{suffix}"),
+            "job_tent_requirement_id": form.get(f"job_tent_requirement_id{suffix}") or None,
+            "tentmaster_id": form.get(f"tentmaster_id{suffix}") or None,
+            "start_at": parse_datetime(form.get(f"start_at{suffix}")),
+            "end_at": parse_datetime(form.get(f"end_at{suffix}")),
+            "required_headcount": form.get(f"required_headcount{suffix}") or 0,
+            "notes": form.get(f"notes{suffix}") or None,
+            "locked": f"locked{suffix}" in form,
+            "source": RecordSource.MANUAL.value,
+        }
+    return {
         "phase_type": form.get("phase_type"),
         "job_tent_requirement_id": form.get("job_tent_requirement_id") or None,
         "tentmaster_id": form.get("tentmaster_id") or None,
@@ -327,11 +434,46 @@ async def update_phase(
         "locked": "locked" in form,
         "source": RecordSource.MANUAL.value,
     }
+
+
+@router.post("/jobs/{job_id}/phases/save-all", response_model=None)
+async def save_all_phases(request: Request, job_id: int, session: SessionDependency) -> Response:
+    form = await request.form()
+    phase_ids = [int(str(value)) for value in form.getlist("phase_id")]
+    updates: list[tuple[int, dict[str, Any]]] = [
+        (phase_id, _phase_payload_from_form(form, phase_id)) for phase_id in phase_ids
+    ]
+    try:
+        JobService(session).update_phases(job_id, updates)
+    except (ValidationError, JobError) as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    return RedirectResponse(f"/jobs/{job_id}/edit?saved=phases#phases", status_code=303)
+
+
+@router.post("/jobs/{job_id}/phases/{phase_id}", response_model=None)
+async def update_phase(
+    request: Request, job_id: int, phase_id: int, session: SessionDependency
+) -> Response:
+    form = await request.form()
+    payload = _phase_payload_from_form(form, phase_id)
+    # Single-phase form uses unsuffixed field names.
+    if form.get("phase_type") is not None and f"phase_type_{phase_id}" not in form:
+        payload = {
+            "phase_type": form.get("phase_type"),
+            "job_tent_requirement_id": form.get("job_tent_requirement_id") or None,
+            "tentmaster_id": form.get("tentmaster_id") or None,
+            "start_at": parse_datetime(form.get("start_at")),
+            "end_at": parse_datetime(form.get("end_at")),
+            "required_headcount": form.get("required_headcount") or 0,
+            "notes": form.get("notes") or None,
+            "locked": "locked" in form,
+            "source": RecordSource.MANUAL.value,
+        }
     try:
         JobService(session).update_phase(job_id, phase_id, payload)
     except (ValidationError, JobError) as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
-    return RedirectResponse(f"/jobs/{job_id}#phases", status_code=303)
+    return RedirectResponse(f"/jobs/{job_id}/edit?saved=phase#phases", status_code=303)
 
 
 @router.post("/jobs/{job_id}/phases/new", response_model=None)
@@ -351,7 +493,7 @@ async def add_phase(request: Request, job_id: int, session: SessionDependency) -
         JobService(session).add_phase(job_id, payload)
     except (ValidationError, JobError) as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
-    return RedirectResponse(f"/jobs/{job_id}#phases", status_code=303)
+    return RedirectResponse(f"/jobs/{job_id}/edit?saved=phase#phases", status_code=303)
 
 
 @router.post("/jobs/{job_id}/phases/{phase_id}/delete", response_model=None)
@@ -360,7 +502,7 @@ def delete_phase(job_id: int, phase_id: int, session: SessionDependency) -> Resp
         JobService(session).delete_phase(job_id, phase_id)
     except JobError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
-    return RedirectResponse(f"/jobs/{job_id}#phases", status_code=303)
+    return RedirectResponse(f"/jobs/{job_id}/edit?saved=phase#phases", status_code=303)
 
 
 @router.post("/jobs/{job_id}/local-crew", response_model=None)
@@ -376,7 +518,7 @@ async def add_local_crew(request: Request, job_id: int, session: SessionDependen
         JobService(session).add_local_crew_booking(job_id, payload)
     except (ValidationError, JobError) as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
-    return RedirectResponse(f"/jobs/{job_id}#phases", status_code=303)
+    return RedirectResponse(f"/jobs/{job_id}/edit?saved=local-crew#local-crew", status_code=303)
 
 
 @router.post("/jobs/{job_id}/local-crew/{booking_id}/delete", response_model=None)
@@ -385,7 +527,7 @@ def delete_local_crew(job_id: int, booking_id: int, session: SessionDependency) 
         JobService(session).delete_local_crew_booking(job_id, booking_id)
     except JobError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
-    return RedirectResponse(f"/jobs/{job_id}#phases", status_code=303)
+    return RedirectResponse(f"/jobs/{job_id}/edit?saved=local-crew#local-crew", status_code=303)
 
 
 @router.post("/jobs/{job_id}/ancillary-equipment", response_model=None)

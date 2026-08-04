@@ -1085,3 +1085,77 @@ information the later phase's own card didn't already carry, just clutter.
   correctly, while SOLIDAYS-2 (a separate job sharing the same venue, on its own independent
   schedule) is unaffected on those same days.
 - 105/105 tests pass, ruff/mypy clean.
+
+---
+
+## D043 — Season board UI: full-bleed layout, continuous multi-day bars, explicit Unassigned columns
+
+**Status:** Accepted  
+**Decision:** Rebuild the season board presentation (template + CSS; small `BoardBlock.phase_type`
+addition) so unassigned jobs, multi-day phases, and a full year are actually scannable:
+
+1. **Full-bleed page** — planning board (and flow diagram) use `container-fluid` via a new
+   `main_class` Jinja block on `base.html`, instead of Bootstrap's narrow `container`.
+2. **Explicit Unassigned columns** — header shows `U1…Un` with a gold rule separating them from
+   Tentmaster lanes (`ua-first`); each body cell has `data-ua-column` and empty
+   `data-tentmaster-id` so drag-drop and layout cannot collapse Unassigned into the first
+   Tentmaster column. (Data packing was already correct; the old visual collapse was layout/CSS.)
+3. **Continuous multi-day bars** — label/subtitle only on `start`/`solo` segments; `mid`/`end` are
+   colour fill only (plus `title` + visually-hidden text). Phase colours: build green, up blue,
+   break amber. Default zoom is **compact**.
+4. **Table layout only** — fixed column widths via `<colgroup>`, `table-layout: fixed`, no
+   `display:flex` on `<td>` (reinforces D041). Sticky date column + sticky header; weekend tint on
+   the date cell only.
+
+**Rationale:** Owner feedback and screenshot showed every unassigned job appearing under Jesse and
+multi-day work as repeated daily cards — unusable as a season view. Backend placement was already
+correct; the board needed Excel-like density and trustworthy columns before manual planning or
+auto-loads.
+
+**Consequences:**
+
+- `BoardBlock.phase_type` added for CSS phase classes.
+- New HTML regression tests: unassigned blocks only in empty-`data-tentmaster-id` cells; visible
+  `block-label` only once per multi-day phase.
+- Verified against live `instance/kayam.db` (SOLIDAYS/ROSKILDE in U* cells only; 107 tests pass).
+
+---
+
+## D044 — Season load & crew-move generator (V1)
+
+**Status:** Accepted  
+**Decision:** Ship a planner-triggered whole-season generator (`SeasonPlanService`) rather than
+waiting for the full Loads Diagram UI or a global optimiser. Button on `/loads`: **Generate season
+loads & crew moves**.
+
+**Behaviour (V1):**
+- Clears only unlocked auto-generated equipment movements (`source=GENERATED`) and auto crew moves
+  (notes marker); locked plans are preserved.
+- Covers **section + pole** shortfalls per job (linked kit expanded on the load sheet only).
+- Prefer job→job reuse of stock after contract Down; else Yard → job.
+- **Leave-at-break:** job→job departs shortly after the donor’s contract Down (not just-in-time for
+  the next Build). Kit must not sit on an empty site for weeks. Early arrival at the next site is
+  fine; if the truck cannot make the destination’s first Build day, that donor is skipped and the
+  shortfall is filled from the Yard.
+- **Return to Yard:** any free stock still sitting at a site after the last job that used it is
+  packed into site → Yard loads (same leave-at-break timing). Season ends with kit back at the Yard.
+- Yard → job arrivals aim at the **first Build day**.
+- Pack Flat (preferred) / Curtain by loading points; one load = one lorry = one `L{n}` number.
+- Crew moves between consecutive Tentmaster job visits at different sites.
+- Travel: haversine estimate.
+
+**Loads Diagram (continuous overlays):**
+- One absolute-positioned job rectangle per gig spanning Build→Break (not per-day cards).
+- Arrivals near the top of the day row; departures near the bottom; Yard out/in markers in the
+  Yard column. SVG arrows share the same coordinate system as the overlays (including header
+  offset) so L# labels sit on the correct dates.
+- Early arrivals and late (legacy just-in-time) departures clamp onto the first/last day of the
+  related job block so every load has a visible origin and destination on the diagram.
+- Click L# / load line for full From/To/dates/vehicle/haulier/contents panel.
+
+**Not in V1:** spare-capacity hitchhiking, named asset assignment, multi-leg via-yard optimisation,
+road-network distances (haversine only).
+
+**Rationale:** Owner asked to “have a go” at season generate after board/capacity work; design
+in `LOAD_ENGINE_DESIGN.md` allows an explicit auto-loads action without solving every open
+algorithm question first. Continuous blocks match the Excel reference sheet the team plans from.

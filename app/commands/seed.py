@@ -216,6 +216,35 @@ def _ensure_linked_parts(session: Session, equipment_types: dict[str, EquipmentT
     return created
 
 
+# Lorry loading points per equipment type (owner Q042). Stored on
+# EquipmentType.section_capacity_units so load capacity % uses the same field as Curtain 6 /
+# Flat 7.2 on LorryType.section_capacity_units. SC and Valhalla have no confirmed points yet.
+LOADING_POINTS: dict[str, Decimal] = {
+    "K": Decimal("1.2"),
+    "m": Decimal("1"),
+    "M": Decimal("1"),
+    "T": Decimal("1"),
+    "s": Decimal("1.2"),
+    "P": Decimal("1.2"),
+    "X": Decimal("1.4"),
+}
+
+
+def _ensure_loading_points(session: Session) -> int:
+    """Apply Q042 points onto equipment types (idempotent updates)."""
+    updated = 0
+    for code, points in LOADING_POINTS.items():
+        equipment_type = session.scalar(select(EquipmentType).where(EquipmentType.code == code))
+        if equipment_type is None:
+            continue
+        if equipment_type.section_capacity_units != points:
+            equipment_type.section_capacity_units = points
+            updated += 1
+    if updated:
+        session.flush()
+    return updated
+
+
 def seed_development_data(session: Session, *, include_operational_demo: bool = False) -> int:
     """Insert idempotent, explicitly labelled demonstration reference data."""
 
@@ -482,6 +511,7 @@ def seed_development_data(session: Session, *, include_operational_demo: bool = 
         created += was_created
 
     created += _ensure_linked_parts(session, equipment_types)
+    created += _ensure_loading_points(session)
 
     asset_codes = ["K1", "K2", "K3"] + [f"M{number}" for number in range(1, 6)]
     asset_codes += [f"P{number}" for number in range(1, 21)] + ["A1", "A2"]
@@ -572,22 +602,46 @@ def seed_development_data(session: Session, *, include_operational_demo: bool = 
         )
         created += was_created
 
-    lorry_type, was_created = get_or_create(
-        session,
-        LorryType,
-        {"name": "Standard artic"},
-        {
-            "section_capacity_units": Decimal("12"),
-            "pole_capacity_units": Decimal("0"),
-            "ancillary_capacity_units": Decimal("0"),
-            "payload_kg": Decimal("0"),
-            "passenger_capacity": 0,
-            "default_cost_per_km": Decimal("0"),
-            "minimum_load_cost": Decimal("0"),
-            "notes": "DEMONSTRATION DATA — zero means an unverified capacity or rate.",
-        },
-    )
-    created += was_created
+    # Operational lorry types from owner capacity data (Q042): Curtain 6 pts, Flat 7.2 pts.
+    # section_capacity_units holds the points budget until a dedicated points model lands.
+    # "Standard artic" is legacy demo only — deactivated if present, not offered on forms.
+    lorry_type = None
+    for name, section_points, notes in (
+        (
+            "Curtain",
+            Decimal("6"),
+            "Curtainsider — 6 loading points (Q042). Prefer Flat when either will do.",
+        ),
+        (
+            "Flat",
+            Decimal("7.2"),
+            "Flatbed — 7.2 loading points (Q042). Preferred over Curtain when either will do.",
+        ),
+    ):
+        item, was_created = get_or_create(
+            session,
+            LorryType,
+            {"name": name},
+            {
+                "section_capacity_units": section_points,
+                "pole_capacity_units": Decimal("0"),
+                "ancillary_capacity_units": Decimal("0"),
+                "payload_kg": Decimal("0"),
+                "passenger_capacity": 0,
+                "default_cost_per_km": Decimal("0"),
+                "minimum_load_cost": Decimal("0"),
+                "notes": notes,
+                "active": True,
+            },
+        )
+        created += was_created
+        if name == "Flat":
+            lorry_type = item
+    legacy = session.scalar(select(LorryType).where(LorryType.name == "Standard artic"))
+    if legacy is not None and legacy.active:
+        legacy.active = False
+        created += 1
+    assert lorry_type is not None
     haulier, was_created = get_or_create(
         session,
         Haulier,

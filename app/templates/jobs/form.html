@@ -34,8 +34,9 @@
   {% if job_id %}
   <hr class="my-4">
   <div class="d-flex justify-content-between align-items-center mb-3"><h2 class="h4 mb-0">Operational editing</h2><a class="btn btn-sm btn-outline-secondary" href="/jobs/{{ job_id }}">Back to job page</a></div>
+  {% if saved %}<div class="alert alert-success py-2">Saved.</div>{% endif %}
   <section id="tent-requirements" class="planning-section"><h2 class="h5">Tent requirements</h2>
-    <div class="table-responsive"><table class="table table-sm"><thead><tr><th>Label</th><th>Sequence</th><th>Contract Up</th><th>Contract Down</th><th></th></tr></thead><tbody>{% for requirement in job.tent_requirements %}<tr><td>{{ requirement.custom_name or '—' }}</td><td>{{ requirement.sequence_code }}</td><td>{{ requirement.contracted_up_at.strftime('%d %b %H:%M') }}</td><td>{{ requirement.contracted_down_at.strftime('%d %b %H:%M') }}</td><td><form method="post" action="/jobs/{{ job.id }}/tent-requirements/{{ requirement.id }}/delete"><button class="btn btn-sm btn-link text-danger" type="submit">Remove</button></form></td></tr>{% else %}<tr><td colspan="5" class="text-secondary">No tent requirements.</td></tr>{% endfor %}</tbody></table></div>
+    <div class="table-responsive"><table class="table table-sm"><thead><tr><th>Label</th><th>Sequence</th><th>Contract Up</th><th>Contract Down</th><th></th></tr></thead><tbody>{% for requirement in job.tent_requirements %}<tr><td>{{ requirement.custom_name or '—' }}</td><td>{{ requirement.sequence_code }}</td><td>{{ requirement.contracted_up_at|wall_clock }}</td><td>{{ requirement.contracted_down_at|wall_clock }}</td><td><form method="post" action="/jobs/{{ job.id }}/tent-requirements/{{ requirement.id }}/delete"><button class="btn btn-sm btn-link text-danger" type="submit">Remove</button></form></td></tr>{% else %}<tr><td colspan="5" class="text-secondary">No tent requirements.</td></tr>{% endfor %}</tbody></table></div>
     <form method="post" action="/jobs/{{ job.id }}/tent-requirements" class="row g-2 align-items-end border-top pt-3"><div class="col-md-3"><label class="form-label" for="sequence">Section sequence</label><input class="form-control" id="sequence" name="sequence" placeholder="K-M-M-M-K" required><div class="form-text">Hyphen-separated. Codes: {% for section_type in section_types %}{{ section_type.code }}{% if not loop.last %}, {% endif %}{% endfor %}.</div></div><div class="col-md-1"><label class="form-label" for="quantity">Qty</label><input class="form-control" type="number" min="1" id="quantity" name="quantity" value="1"></div><div class="col-md-2"><label class="form-label" for="custom_name">Label</label><input class="form-control" id="custom_name" name="custom_name"></div><div class="col-md-2"><label class="form-label" for="contracted_up_at">Contract Up</label><input class="form-control" type="datetime-local" id="contracted_up_at" name="contracted_up_at" required></div><div class="col-md-2"><label class="form-label" for="contracted_down_at">Contract Down</label><input class="form-control" type="datetime-local" id="contracted_down_at" name="contracted_down_at" required></div><div class="col-md-2"><button class="btn btn-primary" type="submit">Add tent</button></div></form>
     <p class="form-text mt-2">Adding a tent auto-seeds its Up phase (bounded by the contract dates above) and, for the site's Build/Break phases, a starting point 5 days before the earliest Up and 3 days after the latest Down — adjust freely below.</p>
   </section>
@@ -43,36 +44,91 @@
     <form method="post" action="/jobs/{{ job.id }}/ancillary-equipment" class="row g-2 align-items-end"><div class="col-md-5"><label class="form-label" for="equipment_type_id">Book tracked equipment</label><select class="form-select" id="equipment_type_id" name="equipment_type_id" required>{% for equipment_type in ancillary_types %}<option value="{{ equipment_type.id }}">{{ equipment_type.code }} · {{ equipment_type.name }}</option>{% endfor %}</select></div><div class="col-md-2"><label class="form-label" for="anc_quantity">Quantity</label><input class="form-control" type="number" min="1" id="anc_quantity" name="quantity" value="1"></div><div class="col-md-2"><button class="btn btn-outline-primary" type="submit">Book</button></div></form>
   </section>
   <section id="equipment-assignments" class="planning-section"><h2 class="h5">Physical equipment assignments</h2><form method="post" action="/jobs/{{ job.id }}/confirm"><div class="table-responsive"><table class="table table-sm"><thead><tr><th>Requirement</th><th>Assigned assets</th><th>Strength</th><th>Lock</th><th>Approve</th><th></th></tr></thead><tbody>{% for requirement in job.equipment_requirements %}{% if requirement.assignments %}{% for assignment in requirement.assignments %}<tr><td>{{ requirement.equipment_type.code }}</td><td><a href="/equipment/{{ assignment.equipment_asset_id }}">{{ assignment.equipment_asset.asset_code }}</a></td><td>{{ assignment.allocation_strength.value }}</td><td>{% if assignment.locked %}🔒 Locked{% else %}Open{% endif %}</td><td><input type="checkbox" name="assignment_ids" value="{{ assignment.id }}" {% if assignment.allocation_strength.value == 'soft' %}checked{% endif %} aria-label="Approve {{ assignment.equipment_asset.asset_code }}"></td><td><a href="/jobs/{{ job.id }}/equipment/{{ requirement.id }}/assign">Add another</a></td></tr>{% endfor %}{% else %}<tr><td>{{ requirement.equipment_type.code }} × {{ requirement.quantity_required }}</td><td colspan="4" class="text-secondary">Unassigned</td><td><a href="/jobs/{{ job.id }}/equipment/{{ requirement.id }}/assign">Assign asset</a></td></tr>{% endif %}{% endfor %}</tbody></table></div>{% if job.equipment_requirements %}<button class="btn btn-outline-success" type="submit">Confirm approved holds</button>{% endif %}</form></section>
-  <section id="phases" class="planning-section"><h2 class="h5">Operational phases and crew</h2><p class="text-muted small">Up phases are bounded by their tent's fixed contract dates — you're scheduling who covers the contract, not the contract itself. Build/Break apply to the whole site. Add or remove phases freely, e.g. to split an Up phase across a crew handover (overlap is fine).</p>
-    {% for phase in job.phases|sort(attribute='start_at') %}
-      <form method="post" action="/jobs/{{ job.id }}/phases/{{ phase.id }}" class="row g-2 align-items-end phase-row">
-        <div class="col-md-2"><label class="form-label">Phase</label><select class="form-select form-select-sm" name="phase_type">{% for phase_type in phase_types %}<option value="{{ phase_type.value }}" {% if phase.phase_type == phase_type %}selected{% endif %}>{{ phase_type.value|replace('_',' ')|title }}</option>{% endfor %}</select></div>
-        <div class="col-md-2"><label class="form-label">Tent (Up only)</label><select class="form-select form-select-sm" name="job_tent_requirement_id"><option value="">—</option>{% for requirement in job.tent_requirements %}<option value="{{ requirement.id }}" {% if phase.job_tent_requirement_id == requirement.id %}selected{% endif %}>{{ requirement.custom_name or requirement.sequence_code }}</option>{% endfor %}</select></div>
-        <div class="col-md-2"><label class="form-label">Tentmaster</label><select class="form-select form-select-sm" name="tentmaster_id"><option value="">—</option>{% for tentmaster in tentmasters %}<option value="{{ tentmaster.id }}" {% if phase.tentmaster_id == tentmaster.id %}selected{% endif %}>{{ tentmaster.name }}</option>{% endfor %}</select></div>
-        <div class="col-md-2"><label class="form-label">Start</label><input class="form-control form-control-sm" type="datetime-local" name="start_at" value="{{ phase.start_at.strftime('%Y-%m-%dT%H:%M') }}"></div>
-        <div class="col-md-2"><label class="form-label">End</label><input class="form-control form-control-sm" type="datetime-local" name="end_at" value="{{ phase.end_at.strftime('%Y-%m-%dT%H:%M') }}"></div>
-        <div class="col-md-1"><label class="form-label">Crew</label><input class="form-control form-control-sm" type="number" min="0" name="required_headcount" value="{{ phase.required_headcount }}"></div>
-        <div class="col-md-1"><div class="form-check mb-1"><input class="form-check-input" type="checkbox" name="locked" id="lock-{{ phase.id }}" {% if phase.locked %}checked{% endif %}><label class="form-check-label" for="lock-{{ phase.id }}">Locked</label></div></div>
-        <div class="col-md-12"><button class="btn btn-sm btn-outline-primary" type="submit">Save phase</button></div>
-      </form>
+  <section id="phases" class="planning-section"><h2 class="h5">Operational phases and crew</h2><p class="text-muted small">Up phases are bounded by their tent's fixed contract dates — you're scheduling who covers the contract, not the contract itself. Build/Break apply to the whole site. Use <strong>Save all phases</strong> after setting Tentmasters — you stay on this page.</p>
+    {% if job.phases %}
+    <form method="post" action="/jobs/{{ job.id }}/phases/save-all" id="phases-save-all">
+      {% for phase in job.phases|sort(attribute='start_at') %}
+      <input type="hidden" name="phase_id" value="{{ phase.id }}">
+      <div class="row g-2 align-items-end phase-row">
+        <div class="col-md-2"><label class="form-label">Phase</label><select class="form-select form-select-sm" name="phase_type_{{ phase.id }}">{% for phase_type in phase_types %}<option value="{{ phase_type.value }}" {% if phase.phase_type == phase_type %}selected{% endif %}>{{ phase_type.value|replace('_',' ')|title }}</option>{% endfor %}</select></div>
+        <div class="col-md-2">
+          <label class="form-label">Tent (Up only)</label>
+          {% if phase.phase_type.value == 'up' %}
+          <select class="form-select form-select-sm" name="job_tent_requirement_id_{{ phase.id }}">
+            <option value="">—</option>
+            {% for requirement in job.tent_requirements %}
+            <option value="{{ requirement.id }}" {% if phase.job_tent_requirement_id == requirement.id %}selected{% endif %}>{{ requirement.custom_name or requirement.sequence_code }}</option>
+            {% endfor %}
+          </select>
+          {% else %}
+          <input type="hidden" name="job_tent_requirement_id_{{ phase.id }}" value="">
+          <select class="form-select form-select-sm" disabled title="Only Up phases are tied to a specific tent">
+            <option value="">—</option>
+            {% for requirement in job.tent_requirements %}
+            <option value="{{ requirement.id }}" {% if phase.job_tent_requirement_id == requirement.id %}selected{% endif %}>{{ requirement.custom_name or requirement.sequence_code }}</option>
+            {% endfor %}
+          </select>
+          {% endif %}
+        </div>
+        <div class="col-md-2"><label class="form-label">Tentmaster</label><select class="form-select form-select-sm" name="tentmaster_id_{{ phase.id }}"><option value="">—</option>{% for tentmaster in tentmasters %}<option value="{{ tentmaster.id }}" {% if phase.tentmaster_id == tentmaster.id %}selected{% endif %}>{{ tentmaster.name }}</option>{% endfor %}</select></div>
+        <div class="col-md-2"><label class="form-label">Start</label><input class="form-control form-control-sm" type="datetime-local" name="start_at_{{ phase.id }}" value="{{ phase.start_at|wall_input }}"></div>
+        <div class="col-md-2"><label class="form-label">End</label><input class="form-control form-control-sm" type="datetime-local" name="end_at_{{ phase.id }}" value="{{ phase.end_at|wall_input }}"></div>
+        <div class="col-md-1"><label class="form-label">Crew</label><input class="form-control form-control-sm" type="number" min="0" name="required_headcount_{{ phase.id }}" value="{{ phase.required_headcount }}"></div>
+        <div class="col-md-1"><div class="form-check mb-1"><input class="form-check-input" type="checkbox" name="locked_{{ phase.id }}" id="lock-{{ phase.id }}" {% if phase.locked %}checked{% endif %}><label class="form-check-label" for="lock-{{ phase.id }}">Locked</label></div></div>
+      </div>
       {% set counts = phase_headcounts[phase.id] %}
       <div class="small ps-2 pb-2 d-flex gap-2 align-items-center">
         <strong>{{ counts.assigned }}/{{ counts.required }} assigned</strong>{% if counts.shortfall %} · <span class="text-danger">short {{ counts.shortfall }}</span>{% endif %} · {{ counts.names|join(', ') or 'No named crew' }}
-        <form method="post" action="/jobs/{{ job.id }}/phases/{{ phase.id }}/delete" class="d-inline"><button class="btn btn-sm btn-link text-danger" type="submit" {% if phase.locked %}disabled{% endif %}>Remove phase</button></form>
+        <button class="btn btn-sm btn-link text-danger" type="submit" formaction="/jobs/{{ job.id }}/phases/{{ phase.id }}/delete" formmethod="post" {% if phase.locked %}disabled{% endif %} formnovalidate>Remove phase</button>
       </div>
-    {% endfor %}
-    <form method="post" action="/jobs/{{ job.id }}/phases/new" class="row g-2 align-items-end border-top pt-3">
-      <div class="col-md-2"><label class="form-label">Phase</label><select class="form-select form-select-sm" name="phase_type">{% for phase_type in phase_types %}<option value="{{ phase_type.value }}">{{ phase_type.value|replace('_',' ')|title }}</option>{% endfor %}</select></div>
-      <div class="col-md-2"><label class="form-label">Tent (Up only)</label><select class="form-select form-select-sm" name="job_tent_requirement_id"><option value="">—</option>{% for requirement in job.tent_requirements %}<option value="{{ requirement.id }}">{{ requirement.custom_name or requirement.sequence_code }}</option>{% endfor %}</select></div>
+      {% endfor %}
+      <div class="d-flex gap-2 border-top pt-3 mb-3">
+        <button class="btn btn-primary" type="submit">Save all phases</button>
+        <span class="form-text align-self-center">Saves every phase row below (Tentmasters, dates, crew) and stays on this page.</span>
+      </div>
+    </form>
+    {% endif %}
+    <form method="post" action="/jobs/{{ job.id }}/phases/new" class="row g-2 align-items-end border-top pt-3" id="add-phase-form">
+      <div class="col-md-2">
+        <label class="form-label">Phase</label>
+        <select class="form-select form-select-sm" name="phase_type" id="add-phase-type">
+          {% for phase_type in phase_types %}
+          <option value="{{ phase_type.value }}">{{ phase_type.value|replace('_',' ')|title }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-2">
+        <label class="form-label">Tent (Up only)</label>
+        <select class="form-select form-select-sm" name="job_tent_requirement_id" id="add-phase-tent" disabled title="Only Up phases are tied to a specific tent">
+          <option value="">—</option>
+          {% for requirement in job.tent_requirements %}
+          <option value="{{ requirement.id }}">{{ requirement.custom_name or requirement.sequence_code }}</option>
+          {% endfor %}
+        </select>
+      </div>
       <div class="col-md-2"><label class="form-label">Tentmaster</label><select class="form-select form-select-sm" name="tentmaster_id"><option value="">—</option>{% for tentmaster in tentmasters %}<option value="{{ tentmaster.id }}">{{ tentmaster.name }}</option>{% endfor %}</select></div>
       <div class="col-md-2"><label class="form-label">Start</label><input class="form-control form-control-sm" type="datetime-local" name="start_at" required></div>
       <div class="col-md-2"><label class="form-label">End</label><input class="form-control form-control-sm" type="datetime-local" name="end_at" required></div>
       <div class="col-md-1"><label class="form-label">Crew</label><input class="form-control form-control-sm" type="number" min="0" name="required_headcount" value="0"></div>
       <div class="col-md-1"><button class="btn btn-sm btn-primary" type="submit">Add phase</button></div>
     </form>
+    <script>
+      (function () {
+        const typeSelect = document.getElementById("add-phase-type");
+        const tentSelect = document.getElementById("add-phase-tent");
+        if (!typeSelect || !tentSelect) return;
+        function syncTent() {
+          const isUp = typeSelect.value === "up";
+          tentSelect.disabled = !isUp;
+          if (!isUp) tentSelect.value = "";
+        }
+        typeSelect.addEventListener("change", syncTent);
+        syncTent();
+      })();
+    </script>
   </section>
   <section id="local-crew" class="planning-section"><h2 class="h5">Local crew</h2><p class="text-muted small">Anonymous local/hired headcount booked onto the site between two dates — joins whichever phase(s) are active over that window and counts toward each one's total.</p>
-    <div class="table-responsive"><table class="table table-sm"><thead><tr><th>Headcount</th><th>From</th><th>To</th><th>Notes</th><th></th></tr></thead><tbody>{% for booking in job.local_crew_bookings|sort(attribute='start_at') %}<tr><td>{{ booking.headcount }}</td><td>{{ booking.start_at.strftime('%d %b %H:%M') }}</td><td>{{ booking.end_at.strftime('%d %b %H:%M') }}</td><td>{{ booking.notes or '' }}</td><td><form method="post" action="/jobs/{{ job.id }}/local-crew/{{ booking.id }}/delete"><button class="btn btn-sm btn-link text-danger" type="submit">Remove</button></form></td></tr>{% else %}<tr><td colspan="5" class="text-secondary">No local crew booked.</td></tr>{% endfor %}</tbody></table></div>
+    <div class="table-responsive"><table class="table table-sm"><thead><tr><th>Headcount</th><th>From</th><th>To</th><th>Notes</th><th></th></tr></thead><tbody>{% for booking in job.local_crew_bookings|sort(attribute='start_at') %}<tr><td>{{ booking.headcount }}</td><td>{{ booking.start_at|wall_clock }}</td><td>{{ booking.end_at|wall_clock }}</td><td>{{ booking.notes or '' }}</td><td><form method="post" action="/jobs/{{ job.id }}/local-crew/{{ booking.id }}/delete"><button class="btn btn-sm btn-link text-danger" type="submit">Remove</button></form></td></tr>{% else %}<tr><td colspan="5" class="text-secondary">No local crew booked.</td></tr>{% endfor %}</tbody></table></div>
     <form method="post" action="/jobs/{{ job.id }}/local-crew" class="row g-2 align-items-end border-top pt-3"><div class="col-md-2"><label class="form-label" for="headcount">Headcount</label><input class="form-control" type="number" min="1" id="headcount" name="headcount" value="1" required></div><div class="col-md-3"><label class="form-label" for="local_start_at">From</label><input class="form-control" type="datetime-local" id="local_start_at" name="start_at" required></div><div class="col-md-3"><label class="form-label" for="local_end_at">To</label><input class="form-control" type="datetime-local" id="local_end_at" name="end_at" required></div><div class="col-md-3"><label class="form-label" for="local_notes">Notes</label><input class="form-control" id="local_notes" name="notes"></div><div class="col-md-1"><button class="btn btn-primary" type="submit">Add</button></div></form>
   </section>
   {% endif %}
